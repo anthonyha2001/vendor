@@ -1,0 +1,1362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manifest — Vendor Order Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg: #eef1ef;
+    --panel: #ffffff;
+    --ink: #1b2430;
+    --ink-dim: #5b6472;
+    --line: #dde1de;
+    --sidebar: #1b2430;
+    --sidebar-ink: #c7cdd6;
+    --sidebar-ink-active: #ffffff;
+    --amber: #d98e04;
+    --amber-ink: #4a3200;
+    --teal: #2a7f77;
+    --red: #c1443c;
+    --red-bg: #fbe9e7;
+    --green: #3c8558;
+    --green-bg: #e7f3ea;
+    --slate: #6b7280;
+    --slate-bg: #eef0f2;
+    --radius: 10px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;}
+  body{
+    font-family:'IBM Plex Sans', sans-serif;
+    background:var(--bg);
+    color:var(--ink);
+    -webkit-font-smoothing:antialiased;
+  }
+  #app{display:flex; min-height:100vh;}
+  .mono{font-family:'IBM Plex Mono', monospace;}
+  h1,h2,h3{font-family:'Space Grotesk', sans-serif; margin:0;}
+
+  /* Sidebar */
+  #sidebar{
+    width:220px; flex-shrink:0; background:var(--sidebar); color:var(--sidebar-ink);
+    display:flex; flex-direction:column; padding:24px 0; position:sticky; top:0; height:100vh;
+  }
+  .brand{padding:0 20px 24px 20px; border-bottom:1px solid rgba(255,255,255,0.08); margin-bottom:12px;}
+  .brand-mark{font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:19px; color:#fff; letter-spacing:0.3px;}
+  .brand-sub{font-size:11px; color:var(--sidebar-ink); opacity:0.7; margin-top:2px; font-family:'IBM Plex Mono',monospace; letter-spacing:0.5px; text-transform:uppercase;}
+  .nav-item{
+    display:flex; align-items:center; gap:10px; padding:11px 20px; cursor:pointer;
+    font-size:14px; font-weight:500; color:var(--sidebar-ink); border-left:3px solid transparent;
+    transition:all .15s ease;
+  }
+  .nav-item:hover{background:rgba(255,255,255,0.05); color:#fff;}
+  .nav-item.active{background:rgba(217,142,4,0.12); color:var(--sidebar-ink-active); border-left-color:var(--amber);}
+  .nav-icon{width:16px; text-align:center; opacity:0.85;}
+  .nav-badge{
+    margin-left:auto; background:var(--red); color:#fff; font-size:10px; font-family:'IBM Plex Mono',monospace;
+    padding:1px 6px; border-radius:20px; font-weight:600;
+  }
+  .sidebar-footer{margin-top:auto; padding:16px 20px 0 20px; border-top:1px solid rgba(255,255,255,0.08);}
+  .reset-link{font-size:11px; color:var(--sidebar-ink); opacity:0.55; cursor:pointer; text-decoration:underline;}
+  .reset-link:hover{opacity:0.9;}
+
+  /* Main */
+  #main{flex:1; padding:32px 40px; max-width:1200px;}
+  .page-header{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:24px; flex-wrap:wrap; gap:12px;}
+  .page-title{font-size:26px; font-weight:700;}
+  .page-sub{color:var(--ink-dim); font-size:13px; margin-top:4px;}
+
+  .btn{
+    font-family:'IBM Plex Sans',sans-serif; font-weight:600; font-size:13px; border:none; border-radius:8px;
+    padding:9px 16px; cursor:pointer; transition:all .12s ease; display:inline-flex; align-items:center; gap:6px;
+  }
+  .btn-amber{background:var(--amber); color:#fff;}
+  .btn-amber:hover{background:#c17f03;}
+  .btn-ghost{background:transparent; color:var(--ink); border:1px solid var(--line);}
+  .btn-ghost:hover{background:#f4f4f2;}
+  .btn-danger{background:transparent; color:var(--red); border:1px solid #e8c4c1;}
+  .btn-danger:hover{background:var(--red-bg);}
+  .btn-sm{padding:6px 11px; font-size:12px; border-radius:6px;}
+  .btn:disabled{opacity:0.45; cursor:not-allowed;}
+
+  /* Cards */
+  .cards-row{display:grid; grid-template-columns:repeat(auto-fit, minmax(180px,1fr)); gap:14px; margin-bottom:28px;}
+  .stat-card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:18px; position:relative; overflow:hidden;}
+  .stat-card::before{content:''; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--slate);}
+  .stat-card.c-amber::before{background:var(--amber);}
+  .stat-card.c-red::before{background:var(--red);}
+  .stat-card.c-green::before{background:var(--green);}
+  .stat-card.c-teal::before{background:var(--teal);}
+  .stat-num{font-family:'IBM Plex Mono',monospace; font-size:30px; font-weight:600; line-height:1;}
+  .stat-label{font-size:12px; color:var(--ink-dim); margin-top:6px; text-transform:uppercase; letter-spacing:0.4px;}
+
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); margin-bottom:24px;}
+  .panel-header{padding:16px 20px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center;}
+  .panel-title{font-size:15px; font-weight:600; font-family:'Space Grotesk',sans-serif;}
+  .panel-body{padding:4px 0;}
+  .empty-state{padding:32px 20px; text-align:center; color:var(--ink-dim); font-size:13px;}
+
+  /* Manifest-tag row */
+  .tag-row{
+    display:flex; align-items:center; gap:16px; padding:14px 20px 14px 24px; border-bottom:1px solid var(--line);
+    position:relative;
+  }
+  .tag-row:last-child{border-bottom:none;}
+  .tag-row::before{
+    content:''; position:absolute; left:0; top:0; bottom:0; width:1px;
+    background-image: repeating-linear-gradient(to bottom, var(--line) 0 6px, transparent 6px 12px);
+  }
+  .tag-row::after{
+    content:''; position:absolute; left:-5px; top:50%; transform:translateY(-50%);
+    width:10px; height:10px; border-radius:50%; background:var(--bg); border:1px solid var(--line);
+  }
+  .tag-row.overdue{background:var(--red-bg);}
+  .tag-row.handled{background:var(--green-bg);}
+  .tag-main{flex:1; min-width:0;}
+  .tag-name{font-weight:600; font-size:14px;}
+  .tag-meta{font-size:12px; color:var(--ink-dim); margin-top:3px; display:flex; gap:12px; flex-wrap:wrap;}
+  .tag-meta span{white-space:nowrap;}
+  .badge{
+    font-size:11px; font-weight:600; padding:3px 9px; border-radius:20px; font-family:'IBM Plex Mono',monospace;
+    text-transform:uppercase; letter-spacing:0.3px; white-space:nowrap;
+  }
+  .badge-pending{background:var(--slate-bg); color:var(--slate);}
+  .badge-overdue{background:var(--red-bg); color:var(--red); border:1px solid #eac2be;}
+  .badge-delivered{background:var(--green-bg); color:var(--green);}
+  .badge-due{background:#fdf1d9; color:var(--amber-ink);}
+  .tag-actions{display:flex; gap:8px; flex-shrink:0;}
+
+  /* Table */
+  table{width:100%; border-collapse:collapse; font-size:13px;}
+  th{text-align:left; padding:10px 20px; color:var(--ink-dim); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; border-bottom:1px solid var(--line);}
+  td{padding:12px 20px; border-bottom:1px solid var(--line); vertical-align:middle;}
+  tr:last-child td{border-bottom:none;}
+  tr.overdue-row{background:var(--red-bg);}
+
+  /* Search bar */
+  .search-bar-wrap{padding:14px 20px 6px 20px;}
+  .search-bar{
+    width:100%; padding:10px 14px; border:1px solid var(--line); border-radius:8px; font-size:14px;
+    font-family:'IBM Plex Sans',sans-serif; background:#fbfbfa;
+  }
+  .search-bar:focus{outline:2px solid var(--amber); outline-offset:0; border-color:var(--amber);}
+
+  /* Filter pills */
+  .pill-group{display:flex; gap:6px;}
+  .pill{
+    padding:6px 13px; border-radius:20px; font-size:12px; font-weight:600; cursor:pointer;
+    border:1px solid var(--line); background:#fff; color:var(--ink-dim);
+  }
+  .pill.active{background:var(--ink); color:#fff; border-color:var(--ink);}
+
+  /* Date nav */
+  .date-nav{display:flex; align-items:center; gap:10px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 14px;}
+  .date-nav button{background:none; border:none; cursor:pointer; font-size:15px; color:var(--ink-dim); padding:2px 8px;}
+  .date-nav button:hover{color:var(--ink);}
+  .date-nav .cur-date{font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:14px; min-width:210px; text-align:center;}
+
+  /* Modal */
+  #modal-overlay{
+    position:fixed; inset:0; background:rgba(20,24,30,0.5); display:none; align-items:center; justify-content:center; z-index:100; padding:20px;
+  }
+  #modal-overlay.open{display:flex;}
+  .modal{background:#fff; border-radius:14px; width:100%; max-width:460px; max-height:90vh; overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.25);}
+  .modal-header{padding:20px 24px 12px 24px; display:flex; justify-content:space-between; align-items:center;}
+  .modal-header h3{font-size:17px;}
+  .modal-close{cursor:pointer; font-size:20px; color:var(--ink-dim); line-height:1;}
+  .modal-body{padding:4px 24px 24px 24px;}
+  .field{margin-bottom:14px;}
+  .field label{display:block; font-size:12px; font-weight:600; color:var(--ink-dim); margin-bottom:5px; text-transform:uppercase; letter-spacing:0.3px;}
+  .field input, .field select{
+    width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:7px; font-size:14px; font-family:'IBM Plex Sans',sans-serif; background:#fbfbfa;
+  }
+  .field input:focus, .field select:focus{outline:2px solid var(--amber); outline-offset:0; border-color:var(--amber);}
+  .field-row{display:flex; gap:10px;}
+  .field-row .field{flex:1;}
+  .modal-actions{display:flex; justify-content:flex-end; gap:10px; margin-top:18px;}
+  .hint{font-size:11px; color:var(--ink-dim); margin-top:4px;}
+
+  ::selection{background:#fdeecb;}
+  @media (max-width:760px){
+    #app{flex-direction:column;}
+    #sidebar{width:100%; height:auto; flex-direction:row; overflow-x:auto; padding:12px;}
+    .brand{display:none;}
+    .sidebar-footer{display:none;}
+    .nav-item{border-left:none; border-bottom:3px solid transparent; white-space:nowrap;}
+    .nav-item.active{border-bottom-color:var(--amber);}
+    #main{padding:20px;}
+  }
+</style>
+</head>
+<body>
+
+<div id="auth-screen" style="display:flex;min-height:100vh;align-items:center;justify-content:center;background:var(--bg);padding:24px;">
+  <div style="width:min(420px,100%);background:#fff;border:1px solid var(--line);border-radius:14px;padding:30px;box-shadow:0 12px 40px rgba(0,0,0,.08);">
+    <div style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:700;">Manifest</div>
+    <div style="font-size:13px;color:var(--ink-dim);margin:5px 0 24px;">Vendor Order Tracker · Cloud Sync</div>
+    <div id="auth-error" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:14px;"></div>
+    <div class="field"><label>Email</label><input id="auth-email" type="email" autocomplete="email" placeholder="you@example.com"></div>
+    <div class="field"><label>Password</label><input id="auth-password" type="password" autocomplete="current-password" placeholder="••••••••"></div>
+    <div style="display:flex;gap:8px;margin-top:16px;">
+      <button class="btn btn-amber" id="auth-login" style="flex:1;">Sign in</button>
+      <button class="btn btn-ghost" id="auth-signup" style="flex:1;">Create account</button>
+    </div>
+    <div style="font-size:11px;color:var(--ink-dim);margin-top:16px;line-height:1.5;">
+      Your vendors, orders and no-order records are stored in Supabase and follow your account across devices.
+    </div>
+  </div>
+</div>
+<div id="app" style="display:none;">
+  <div id="sidebar">
+    <div class="brand">
+      <div class="brand-mark">Manifest</div>
+      <div class="brand-sub">Vendor Order Tracker</div>
+    </div>
+    <div class="nav-item" data-tab="dashboard"><span class="nav-icon">▤</span> Dashboard</div>
+    <div class="nav-item" data-tab="today"><span class="nav-icon">◷</span> Today's Run</div>
+    <div class="nav-item" data-tab="orders"><span class="nav-icon">▦</span> Orders <span class="nav-badge" id="nav-overdue-badge" style="display:none"></span></div>
+    <div class="nav-item" data-tab="vendors"><span class="nav-icon">☰</span> Vendors</div>
+    <div class="sidebar-footer">
+      <div id="storage-status" style="margin-bottom:10px;"></div>
+      <button class="btn btn-ghost btn-sm" id="backup-excel-btn" style="width:100%; justify-content:center; color:#fff; border-color:rgba(255,255,255,0.25);">⇩ Backup to Excel</button>
+
+      <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <span class="reset-link" id="reset-data">Reset all data</span>
+      <span class="reset-link" id="sign-out" style="color:#fff;">Sign out</span>
+    </div>
+    </div>
+  </div>
+  <div id="main"></div>
+</div>
+
+<div id="modal-overlay">
+  <div class="modal" id="modal-box"></div>
+</div>
+
+<script>
+/* ---------------- State & storage ---------------- */
+const SUPABASE_URL = 'https://xyhnujijhxgjpgnqgmkm.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_sToKsvtZRSnbyK76C69sSg_oB7-P_BH';
+const LOCAL_KEY = 'vendor-tracker-app-data';
+
+let supabaseClient = null;
+let currentUser = null;
+let vendors = [];
+let orders = [];
+let skips = [];
+let storageOK = true;
+let storageMode = 'cloud';
+
+function supabaseConfigured(){
+  return SUPABASE_URL.startsWith('https://')
+    && !SUPABASE_URL.includes('PASTE_YOUR')
+    && !SUPABASE_PUBLISHABLE_KEY.includes('PASTE_YOUR');
+}
+
+function localGet(){
+  try{
+    const raw = localStorage.getItem(LOCAL_KEY);
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){
+    console.error('Could not read local backup', e);
+    return null;
+  }
+}
+
+function localSet(dataObj){
+  try{ localStorage.setItem(LOCAL_KEY, JSON.stringify(dataObj)); }catch(e){}
+}
+
+async function loadCloudData(){
+  const { data, error } = await supabaseClient
+    .from('manifest_data')
+    .select('data')
+    .eq('user_id', currentUser.id)
+    .maybeSingle();
+
+  if(error) throw error;
+
+  if(data && data.data){
+    vendors = Array.isArray(data.data.vendors) ? data.data.vendors : [];
+    orders = Array.isArray(data.data.orders) ? data.data.orders : [];
+    skips = Array.isArray(data.data.skips) ? data.data.skips : [];
+    localSet({vendors, orders, skips});
+    return true;
+  }
+
+  // If this account has no cloud data yet, offer its existing browser data
+  // as the first cloud copy.
+  const local = localGet();
+  if(local && (local.vendors?.length || local.orders?.length || local.skips?.length)){
+    vendors = local.vendors || [];
+    orders = local.orders || [];
+    skips = local.skips || [];
+    await saveData(true);
+    return true;
+  }
+
+  vendors = [];
+  orders = [];
+  skips = [];
+  return false;
+}
+
+async function saveData(silent=false){
+  const payload = {vendors, orders, skips};
+  localSet(payload); // offline fallback
+
+  if(!supabaseClient || !currentUser) return;
+
+  try{
+    const { error } = await supabaseClient
+      .from('manifest_data')
+      .upsert({
+        user_id: currentUser.id,
+        data: payload,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id' });
+
+    if(error) throw error;
+    storageMode = 'cloud';
+    state.lastSavedAt = new Date();
+  }catch(e){
+    storageMode = 'local';
+    console.error('Cloud save failed:', e);
+    if(!silent) alert('Cloud save failed. Your latest data is still saved in this browser.\\n\\n' + e.message);
+  }
+  updateStorageStatusUI();
+}
+
+function updateStorageStatusUI(){
+  const el = document.getElementById('storage-status');
+  if(!el) return;
+  const time = state.lastSavedAt ? state.lastSavedAt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : null;
+  const cloud = storageMode === 'cloud';
+  const dot = cloud ? '#3fa34d' : '#d98e04';
+  const modeText = cloud
+    ? 'Synced to Supabase — available on your other devices.'
+    : 'Offline/local copy — changes will sync when cloud access is restored.';
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#fff;">
+      <span style="width:7px;height:7px;border-radius:50%;background:${dot};display:inline-block;"></span>
+      ${time ? 'Saved '+time : (cloud ? 'Cloud ready' : 'Local copy')}
+    </div>
+    <div style="font-size:10.5px;color:var(--sidebar-ink);opacity:.7;margin-top:3px;line-height:1.4;">${modeText}</div>
+  `;
+}
+
+async function initSupabase(){
+  if(!supabaseConfigured()){
+    showAuthError('Supabase is not configured yet. Open this file and add your Supabase URL and publishable key near the top of the script.');
+    return;
+  }
+
+  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+    auth: { persistSession:true, autoRefreshToken:true, detectSessionInUrl:true }
+  });
+
+  const { data } = await supabaseClient.auth.getSession();
+  if(data.session) await startApp(data.session.user);
+
+  supabaseClient.auth.onAuthStateChange(async (_event, session)=>{
+    if(session) await startApp(session.user);
+  });
+}
+
+async function startApp(user){
+  currentUser = user;
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+
+  try{
+    await loadCloudData();
+    state.lastSavedAt = new Date();
+    updateStorageStatusUI();
+    render();
+  }catch(e){
+    showAuthError('Could not load your cloud data: ' + e.message);
+    console.error(e);
+  }
+}
+
+function showAuthError(message){
+  const el = document.getElementById('auth-error');
+  if(el){ el.textContent = message; el.style.display = 'block'; }
+}
+
+async function authAction(type){
+  const email = document.getElementById('auth-email').value.trim();
+  const password = document.getElementById('auth-password').value;
+  if(!email || !password){
+    showAuthError('Enter both your email and password.');
+    return;
+  }
+  if(password.length < 6){
+    showAuthError('Password must be at least 6 characters.');
+    return;
+  }
+  showAuthError('');
+  const fn = type === 'signup'
+    ? supabaseClient.auth.signUp({email, password})
+    : supabaseClient.auth.signInWithPassword({email, password});
+  const {data, error} = await fn;
+  if(error){ showAuthError(error.message); return; }
+  if(type === 'signup' && !data.session){
+    showAuthError('Account created. Check your email to confirm it, then sign in.');
+  }
+}
+
+let state = { tab:'dashboard', todayViewDate: toDateStr(new Date()), orderFilter:'all', vendorSearch:'', vendorDayFilter:'all', todaySearch:'', otherVendorsShown:25 };
+
+function loadData(){
+  try{
+    const parsed = storageGetData();
+    if(parsed){
+      vendors = parsed.vendors || [];
+      orders = parsed.orders || [];
+      skips = parsed.skips || [];
+    }
+  }catch(e){
+    storageOK = false;
+  }
+  updateStorageStatusUI();
+  render();
+}
+
+function saveData(){
+  try{
+    storageSetData({vendors, orders, skips});
+    state.lastSavedAt = new Date();
+  }catch(e){
+    console.error('Storage save failed', e);
+  }
+  updateStorageStatusUI();
+}
+
+function updateStorageStatusUI(){
+  const el = document.getElementById('storage-status');
+  if(!el) return;
+  const time = state.lastSavedAt ? state.lastSavedAt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : null;
+  let dot = '#3fa34d', modeText = 'Saved in this browser. Use Backup to Excel for a portable copy.';
+  if(storageMode==='local'){ dot='#d98e04'; modeText = 'Saved in this browser. Use "Backup to Excel" regularly, or import your backup on another device.'; }
+  else { dot='#c1443c'; modeText = 'No storage available right now — back up to Excel to avoid losing data.'; }
+  el.innerHTML = `
+    <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#fff;">
+      <span style="width:7px; height:7px; border-radius:50%; background:${dot}; display:inline-block;"></span>
+      ${time ? 'Saved '+time : 'Not saved yet'}
+    </div>
+    <div style="font-size:10.5px; color:var(--sidebar-ink); opacity:0.7; margin-top:3px; line-height:1.4;">${modeText}</div>
+  `;
+}
+
+/* ---------------- Date helpers ---------------- */
+function toDateStr(d){
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function parseDate(s){
+  const [y,m,d] = s.split('-').map(Number);
+  return new Date(y, m-1, d);
+}
+function addDays(dateStr, n){
+  const d = parseDate(dateStr);
+  d.setDate(d.getDate()+n);
+  return toDateStr(d);
+}
+function todayStr(){ return toDateStr(new Date()); }
+function dayName(idx, short){
+  const full=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const shortN=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  return short ? shortN[idx] : full[idx];
+}
+function formatDateNice(dateStr){
+  const d = parseDate(dateStr);
+  return dayName(d.getDay(),true)+', '+d.toLocaleDateString('en-US',{month:'short', day:'numeric', year:'numeric'});
+}
+function nextOccurrence(dayOfWeek, fromDateStr){
+  const d = parseDate(fromDateStr || todayStr());
+  const diff = (dayOfWeek - d.getDay() + 7) % 7;
+  d.setDate(d.getDate()+diff);
+  return toDateStr(d);
+}
+const FREQ_LABELS = {1:'Every week', 2:'Every 2 weeks', 3:'Every 3 weeks', 4:'Every 4 weeks (monthly)'};
+
+/* ---------------- Domain logic ---------------- */
+function isDueOn(vendor, dateStr){
+  const date = parseDate(dateStr);
+  if(date.getDay() !== Number(vendor.dayOfWeek)) return false;
+  const anchor = parseDate(vendor.anchorDate);
+  const diffDays = Math.round((date - anchor)/86400000);
+  if(diffDays < 0) return false;
+  const diffWeeks = Math.round(diffDays/7);
+  return diffWeeks % Number(vendor.frequencyWeeks) === 0;
+}
+function ordersForVendor(vendorId){
+  return orders.filter(o=>o.vendorId===vendorId).sort((a,b)=> a.orderDate < b.orderDate ? 1 : -1);
+}
+function lastOrderDate(vendorId){
+  const list = ordersForVendor(vendorId);
+  return list.length ? list[0].orderDate : null;
+}
+function lastDelivery(vendorId){
+  const delivered = orders.filter(o=>o.vendorId===vendorId && o.status==='delivered').sort((a,b)=> a.deliveredDate < b.deliveredDate ? 1 : -1);
+  return delivered.length ? delivered[0] : null;
+}
+function isOverdue(order){
+  return order.status==='pending' && order.expectedDelivery < todayStr();
+}
+function pendingOrderForVendor(vendorId){
+  const list = orders.filter(o=>o.vendorId===vendorId && o.status==='pending').sort((a,b)=> a.orderDate < b.orderDate ? 1 : -1);
+  return list.length ? list[0] : null;
+}
+function orderStatusBadge(order){
+  if(order.status==='delivered') return '<span class="badge badge-delivered">Delivered</span>';
+  if(isOverdue(order)) return '<span class="badge badge-overdue">Overdue</span>';
+  return '<span class="badge badge-pending">Pending</span>';
+}
+function hasOrderOnDate(vendorId, dateStr){
+  return orders.some(o=>o.vendorId===vendorId && o.orderDate===dateStr);
+}
+function vendorById(id){ return vendors.find(v=>v.id===id); }
+function hasSkipOnDate(vendorId, dateStr){
+  return skips.some(s=>s.vendorId===vendorId && s.date===dateStr);
+}
+function skipsForVendor(vendorId){
+  return skips.filter(s=>s.vendorId===vendorId).sort((a,b)=> a.date < b.date ? 1 : -1);
+}
+function lastSkip(vendorId){
+  const list = skipsForVendor(vendorId);
+  return list.length ? list[0] : null;
+}
+function addSkip(vendorId, dateStr){
+  skips.push({ id:'s_'+Date.now()+Math.random().toString(36).slice(2,7), vendorId, date:dateStr, loggedAt:new Date().toISOString() });
+  saveData();
+}
+function removeSkip(vendorId, dateStr){
+  skips = skips.filter(s=>!(s.vendorId===vendorId && s.date===dateStr));
+  saveData();
+}
+function matchesSearch(v, term){
+  if(!term) return true;
+  const t = term.toLowerCase();
+  return (v.name||'').toLowerCase().includes(t) || (v.salesmanName||'').toLowerCase().includes(t) || (v.phone||'').toLowerCase().includes(t);
+}
+
+function updateOverdueBadge(){
+  const count = orders.filter(isOverdue).length;
+  const el = document.getElementById('nav-overdue-badge');
+  if(count>0){ el.style.display='inline-block'; el.textContent=count; }
+  else{ el.style.display='none'; }
+}
+
+/* ---------------- Rendering ---------------- */
+function render(){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active', n.dataset.tab===state.tab));
+  updateOverdueBadge();
+  const main = document.getElementById('main');
+  if(state.tab==='dashboard') main.innerHTML = renderDashboard();
+  else if(state.tab==='today') main.innerHTML = renderToday();
+  else if(state.tab==='orders') main.innerHTML = renderOrders();
+  else if(state.tab==='vendors') main.innerHTML = renderVendors();
+  attachMainEvents();
+}
+
+function renderDashboard(){
+  const today = todayStr();
+  const dueTodayVendors = vendors.filter(v=>isDueOn(v, today));
+  const ordersToday = orders.filter(o=>o.orderDate===today);
+  const pending = orders.filter(o=>o.status==='pending');
+  const overdue = orders.filter(isOverdue);
+  const upcoming = pending.filter(o=>!isOverdue(o)).sort((a,b)=> a.expectedDelivery < b.expectedDelivery ? -1 : 1).slice(0,6);
+
+  return `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Dashboard</div>
+        <div class="page-sub">${formatDateNice(today)}</div>
+      </div>
+    </div>
+    <div class="cards-row">
+      <div class="stat-card c-teal"><div class="stat-num">${vendors.length}</div><div class="stat-label">Vendors</div></div>
+      <div class="stat-card c-amber"><div class="stat-num">${dueTodayVendors.length}</div><div class="stat-label">Due today</div></div>
+      <div class="stat-card"><div class="stat-num">${ordersToday.length}</div><div class="stat-label">Orders placed today</div></div>
+      <div class="stat-card c-green"><div class="stat-num">${pending.length}</div><div class="stat-label">Awaiting delivery</div></div>
+      <div class="stat-card c-red"><div class="stat-num">${overdue.length}</div><div class="stat-label">Overdue</div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">On the schedule today</div>
+        <div class="btn btn-ghost btn-sm" data-action="goto-today">Open Today's Run →</div>
+      </div>
+      <div class="panel-body">
+        ${dueTodayVendors.length ? dueTodayVendors.map(v=>{
+          const pendingOrder = pendingOrderForVendor(v.id);
+          const skipped = hasSkipOnDate(v.id, today);
+          let badge = '<span class="badge badge-due">Not ordered yet</span>';
+          if(pendingOrder) badge = `<span class="badge ${isOverdue(pendingOrder)?'badge-overdue':'badge-pending'}">${isOverdue(pendingOrder)?'Overdue':'Not received'} · exp ${pendingOrder.expectedDelivery}</span>`;
+          else if(skipped) badge = '<span class="badge badge-pending">No order</span>';
+          return `<div class="tag-row">
+            <div class="tag-main">
+              <div class="tag-name">${escapeHtml(v.name)}</div>
+              <div class="tag-meta"><span>${escapeHtml(v.salesmanName||'—')}</span><span class="mono">${escapeHtml(v.phone||'—')}</span></div>
+            </div>
+            ${badge}
+          </div>`;
+        }).join('') : '<div class="empty-state">No vendor is scheduled to pass today.</div>'}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Overdue deliveries</div>
+      </div>
+      <div class="panel-body">
+        ${overdue.length ? overdue.map(o=>{
+          const v = vendorById(o.vendorId);
+          const days = Math.round((parseDate(today)-parseDate(o.expectedDelivery))/86400000);
+          return `<div class="tag-row overdue">
+            <div class="tag-main">
+              <div class="tag-name">${escapeHtml(v?v.name:'Unknown vendor')}</div>
+              <div class="tag-meta"><span>Ordered ${o.orderDate}</span><span>Expected ${o.expectedDelivery}</span><span style="color:var(--red); font-weight:600;">${days} day${days!==1?'s':''} overdue</span></div>
+            </div>
+            <div class="tag-actions"><button class="btn btn-amber btn-sm" data-action="deliver" data-id="${o.id}">Mark Delivered</button></div>
+          </div>`;
+        }).join('') : '<div class="empty-state">Nothing overdue. Good shape.</div>'}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><div class="panel-title">Upcoming deliveries</div></div>
+      <div class="panel-body">
+        ${upcoming.length ? upcoming.map(o=>{
+          const v = vendorById(o.vendorId);
+          return `<div class="tag-row">
+            <div class="tag-main">
+              <div class="tag-name">${escapeHtml(v?v.name:'Unknown vendor')}</div>
+              <div class="tag-meta"><span>Ordered ${o.orderDate}</span><span>Expected ${formatDateNice(o.expectedDelivery)}</span></div>
+            </div>
+            <span class="badge badge-pending">Pending</span>
+          </div>`;
+        }).join('') : '<div class="empty-state">No pending orders.</div>'}
+      </div>
+    </div>
+  `;
+}
+
+function renderToday(){
+  const d = state.todayViewDate;
+  const isToday = d===todayStr();
+
+  function isVendorHandled(v){
+    const pendingOrder = pendingOrderForVendor(v.id);
+    return !!pendingOrder || hasSkipOnDate(v.id, d);
+  }
+
+  const dueVendorsAll = vendors.filter(v=>isDueOn(v,d));
+  const otherVendorsAll = vendors.filter(v=>!isDueOn(v,d));
+
+  const dueNeedOrder = dueVendorsAll.filter(v=>!isVendorHandled(v));
+  const otherNeedOrder = otherVendorsAll.filter(v=>!isVendorHandled(v));
+  const handledVendors = vendors.filter(v=>isVendorHandled(v));
+
+  function vendorRow(v, scheduled){
+    const pendingOrder = pendingOrderForVendor(v.id);
+    const skipped = hasSkipOnDate(v.id, d);
+    const lastOrd = lastOrderDate(v.id);
+    const lastDel = lastDelivery(v.id);
+    const searchKey = ((v.name||'')+' '+(v.salesmanName||'')+' '+(v.phone||'')).toLowerCase();
+    const handled = !!pendingOrder || skipped;
+    let actions;
+    if(pendingOrder){
+      const overdue = isOverdue(pendingOrder);
+      actions = `<span class="badge ${overdue?'badge-overdue':'badge-pending'}">${overdue?'Overdue':'Not received'} · exp ${pendingOrder.expectedDelivery}</span>
+        <button class="btn btn-amber btn-sm" data-action="deliver" data-id="${pendingOrder.id}">Mark Delivered</button>
+        <button class="btn btn-ghost btn-sm" data-action="place-order" data-id="${v.id}">Order Again</button>`;
+    } else if(skipped){
+      actions = `<span class="badge badge-pending">No order</span><button class="btn btn-ghost btn-sm" data-action="undo-skip" data-id="${v.id}" data-date="${d}">Undo</button>`;
+    } else {
+      actions = `<button class="btn ${scheduled?'btn-amber':'btn-ghost'} btn-sm" data-action="place-order" data-id="${v.id}">Place Order</button>
+        <button class="btn btn-ghost btn-sm" data-action="no-order" data-id="${v.id}" data-date="${d}">No Order</button>`;
+    }
+    return `<div class="tag-row ${handled?'handled':''}" data-search="${escapeHtml(searchKey)}">
+      <div class="tag-main">
+        <div class="tag-name">${escapeHtml(v.name)} ${scheduled?'<span class="badge badge-due">Scheduled</span>':''}</div>
+        <div class="tag-meta">
+          <span>${escapeHtml(v.salesmanName||'—')}</span>
+          <span class="mono">${escapeHtml(v.phone||'—')}</span>
+          <span>Lead time: ${v.leadTimeDays}d</span>
+          <span>Last order: ${lastOrd || '—'}</span>
+          <span>Last delivery: ${lastDel ? (lastDel.deliveredDate + (lastDel.deliveredTime? ' '+lastDel.deliveredTime:'')) : '—'}</span>
+        </div>
+      </div>
+      <div class="tag-actions">
+        ${actions}
+      </div>
+    </div>`;
+  }
+
+  return `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Today's Run</div>
+        <div class="page-sub">Vendors scheduled to pass, and quick manual orders for any other day.</div>
+      </div>
+      <div class="date-nav">
+        <button data-action="date-prev">‹</button>
+        <span class="cur-date">${formatDateNice(d)}${isToday?' · Today':''}</span>
+        <button data-action="date-next">›</button>
+        ${!isToday?'<button class="btn btn-ghost btn-sm" data-action="date-today" style="margin-left:6px;">Today</button>':''}
+      </div>
+    </div>
+
+    <div class="search-bar-wrap" style="padding:0 0 16px 0;">
+      <input type="text" class="search-bar" id="today-search-input" placeholder="Search all vendors or salesmen…" value="${escapeHtml(state.todaySearch||'')}">
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><div class="panel-title">Still to order — scheduled for ${formatDateNice(d)}</div></div>
+      <div class="panel-body">
+        <div id="today-scheduled-list">
+          ${dueNeedOrder.length ? dueNeedOrder.map(v=>vendorRow(v,true)).join('') : '<div class="empty-state">No vendor is waiting on an order for this date.</div>'}
+        </div>
+        <div class="empty-state" id="today-scheduled-no-match" style="display:none;">No vendors match your search.</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Already ordered / no order logged</div>
+      </div>
+      <div class="panel-body">
+        <div id="today-handled-list">
+          ${handledVendors.length ? handledVendors.map(v=>vendorRow(v, isDueOn(v,d))).join('') : '<div class="empty-state">Nothing placed or logged yet — orders will move here once you act on them.</div>'}
+        </div>
+        <div class="empty-state" id="today-handled-no-match" style="display:none;">No vendors match your search.</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Other vendors — order early or out of turn</div>
+      </div>
+      <div class="panel-body">
+        <div id="today-other-list">
+          ${otherNeedOrder.length ? otherNeedOrder.map(v=>vendorRow(v,false)).join('') : '<div class="empty-state">No other vendors waiting — add some in the Vendors tab.</div>'}
+        </div>
+        <div class="empty-state" id="today-no-match" style="display:none;">No vendors match your search.</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderOrders(){
+  const today = todayStr();
+  let list = orders.slice().sort((a,b)=> a.orderDate < b.orderDate ? 1 : -1);
+  if(state.orderFilter==='pending') list = list.filter(o=>o.status==='pending' && !isOverdue(o));
+  if(state.orderFilter==='overdue') list = list.filter(isOverdue);
+  if(state.orderFilter==='delivered') list = list.filter(o=>o.status==='delivered');
+
+  return `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Orders</div>
+        <div class="page-sub">All orders placed, expected, and delivered.</div>
+      </div>
+      <div class="pill-group">
+        <div class="pill ${state.orderFilter==='all'?'active':''}" data-filter="all">All</div>
+        <div class="pill ${state.orderFilter==='pending'?'active':''}" data-filter="pending">Pending</div>
+        <div class="pill ${state.orderFilter==='overdue'?'active':''}" data-filter="overdue">Overdue</div>
+        <div class="pill ${state.orderFilter==='delivered'?'active':''}" data-filter="delivered">Delivered</div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-body">
+        <table>
+          <thead><tr>
+            <th>Vendor</th><th>Salesman / Phone</th><th>Ordered</th><th>Lead time</th><th>Expected</th><th>Status</th><th>Delivered</th><th></th>
+          </tr></thead>
+          <tbody>
+          ${list.length ? list.map(o=>{
+            const v = vendorById(o.vendorId);
+            return `<tr class="${isOverdue(o)?'overdue-row':''}">
+              <td><strong>${escapeHtml(v?v.name:'Unknown')}</strong></td>
+              <td>${escapeHtml(v?v.salesmanName||'—':'—')}<br><span class="mono" style="font-size:12px;color:var(--ink-dim)">${escapeHtml(v?v.phone||'':'')}</span></td>
+              <td class="mono">${o.orderDate}</td>
+              <td class="mono">${o.leadTimeDays}d</td>
+              <td class="mono">${o.expectedDelivery}</td>
+              <td>${orderStatusBadge(o)}</td>
+              <td class="mono">${o.status==='delivered' ? (o.deliveredDate+(o.deliveredTime?' '+o.deliveredTime:'')) : '—'}</td>
+              <td>
+                ${o.status==='pending' ? `<button class="btn btn-amber btn-sm" data-action="deliver" data-id="${o.id}">Mark Delivered</button>` : ''}
+                <button class="btn btn-danger btn-sm" data-action="delete-order" data-id="${o.id}">Delete</button>
+              </td>
+            </tr>`;
+          }).join('') : `<tr><td colspan="8"><div class="empty-state">No orders in this view.</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderVendors(){
+  return `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Vendors</div>
+        <div class="page-sub">Salesman contacts, routing schedule, and default lead time. ${vendors.length} total.</div>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-amber" data-action="add-vendor">+ Add Vendor</button>
+        <button class="btn btn-ghost" data-action="import-excel">⇪ Import from Excel</button>
+        <button class="btn btn-ghost" data-action="download-template">Download Template</button>
+        <input type="file" id="excel-file-input" accept=".xlsx,.xls,.csv" style="display:none;">
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-body">
+        <div class="search-bar-wrap">
+          <input type="text" class="search-bar" id="vendor-search-input" placeholder="Search by vendor or salesman name, or phone…" value="${escapeHtml(state.vendorSearch||'')}">
+        </div>
+        <div id="vendor-list">
+        ${vendors.length ? vendors.map(v=>{
+          const searchKey = ((v.name||'')+' '+(v.salesmanName||'')+' '+(v.phone||'')).toLowerCase();
+          const skipCount = skipsForVendor(v.id).length;
+          return `<div class="tag-row" data-search="${escapeHtml(searchKey)}">
+            <div class="tag-main">
+              <div class="tag-name">${escapeHtml(v.name)}</div>
+              <div class="tag-meta">
+                <span>${escapeHtml(v.salesmanName||'—')}</span>
+                <span class="mono">${escapeHtml(v.phone||'—')}</span>
+                <span>${dayName(Number(v.dayOfWeek))} · ${FREQ_LABELS[v.frequencyWeeks]}</span>
+                <span>Lead time: ${v.leadTimeDays}d</span>
+                <span>Anchor: ${v.anchorDate}</span>
+                ${skipCount ? `<span>No-order weeks: ${skipCount}</span>` : ''}
+              </div>
+            </div>
+            <div class="tag-actions">
+              <button class="btn btn-ghost btn-sm" data-action="edit-vendor" data-id="${v.id}">Edit</button>
+              <button class="btn btn-danger btn-sm" data-action="delete-vendor" data-id="${v.id}">Delete</button>
+            </div>
+          </div>`;
+        }).join('') : '<div class="empty-state">No vendors yet. Add your first vendor to start tracking.</div>'}
+        </div>
+        <div class="empty-state" id="vendor-no-match" style="display:none;">No vendors match your search.</div>
+      </div>
+    </div>
+  `;
+}
+
+function filterRowsBySearch(containerSelector, term, emptyStateSelector){
+  const container = document.querySelector(containerSelector);
+  if(!container) return;
+  const t = (term||'').trim().toLowerCase();
+  const rows = container.querySelectorAll('.tag-row');
+  let visibleCount = 0;
+  rows.forEach(row=>{
+    const key = row.dataset.search || '';
+    const match = !t || key.includes(t);
+    row.style.display = match ? '' : 'none';
+    if(match) visibleCount++;
+  });
+  const emptyEl = document.querySelector(emptyStateSelector);
+  if(emptyEl) emptyEl.style.display = (t && visibleCount===0) ? 'block' : 'none';
+}
+
+function escapeHtml(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ---------------- Excel import ---------------- */
+const DAY_MAP = {sun:0,sunday:0,mon:1,monday:1,tue:2,tues:2,tuesday:2,wed:3,weds:3,wednesday:3,thu:4,thur:4,thurs:4,thursday:4,fri:5,friday:5,sat:6,saturday:6};
+function parseDayOfWeek(val){
+  if(val===undefined||val===null||String(val).trim()==='') return null;
+  const s = String(val).trim().toLowerCase();
+  if(DAY_MAP.hasOwnProperty(s)) return DAY_MAP[s];
+  const n = Number(s);
+  if(!isNaN(n) && n>=0 && n<=6) return n;
+  return null;
+}
+function parseFrequency(val){
+  if(val===undefined||val===null||String(val).trim()==='') return 1;
+  const s = String(val).trim().toLowerCase();
+  const n = parseInt(s,10);
+  if(s.includes('month')) return 4;
+  if(s.includes('bi')) return 2;
+  if(!isNaN(n) && n>=1 && n<=4) return n;
+  return 1;
+}
+function findHeaderKey(headers, candidates){
+  const lower = headers.map(h=>String(h).trim().toLowerCase());
+  for(const c of candidates){
+    const idx = lower.indexOf(c);
+    if(idx>-1) return headers[idx];
+  }
+  for(let i=0;i<lower.length;i++){
+    for(const c of candidates){
+      if(lower[i].includes(c)) return headers[i];
+    }
+  }
+  return null;
+}
+
+function triggerImportFile(){
+  document.getElementById('excel-file-input').click();
+}
+
+function handleImportFile(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (evt)=>{
+    try{
+      const wb = XLSX.read(evt.target.result, {type:'array'});
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, {defval:''});
+      if(!rows.length){
+        alert('No rows found in that file.');
+        return;
+      }
+      const headers = Object.keys(rows[0]);
+      const nameKey = findHeaderKey(headers, ['name','vendor','vendor name','supplier','supplier name']);
+      const salesKey = findHeaderKey(headers, ['salesman','salesman name','rep','sales rep','contact']);
+      const phoneKey = findHeaderKey(headers, ['phone','phone number','contact number','tel','mobile']);
+      const dayKey = findHeaderKey(headers, ['day','day of week','passes on','delivery day','routing day']);
+      const freqKey = findHeaderKey(headers, ['frequency','routing','interval','weeks']);
+      const leadKey = findHeaderKey(headers, ['lead time','lead time days','leadtime','lead']);
+      const anchorKey = findHeaderKey(headers, ['anchor date','start date','first date','anchor']);
+
+      const parsed = [];
+      const skippedRows = [];
+      rows.forEach((row, i)=>{
+        const name = nameKey ? String(row[nameKey]).trim() : '';
+        if(!name){ skippedRows.push(`Row ${i+2}: missing vendor name`); return; }
+        const dayRaw = dayKey ? row[dayKey] : '';
+        const dayOfWeek = parseDayOfWeek(dayRaw);
+        if(dayOfWeek===null){ skippedRows.push(`Row ${i+2} (${name}): missing or unrecognized day of week`); return; }
+        const frequencyWeeks = parseFrequency(freqKey ? row[freqKey] : '');
+        const leadTimeDays = leadKey && row[leadKey]!=='' && !isNaN(Number(row[leadKey])) ? Number(row[leadKey]) : 4;
+        let anchorDate = anchorKey ? String(row[anchorKey]).trim() : '';
+        if(!anchorDate || isNaN(Date.parse(anchorDate))){
+          anchorDate = nextOccurrence(dayOfWeek);
+        } else {
+          const d = new Date(anchorDate);
+          anchorDate = toDateStr(d);
+        }
+        parsed.push({
+          id: 'v_'+Date.now()+Math.random().toString(36).slice(2,7)+i,
+          name,
+          salesmanName: salesKey ? String(row[salesKey]).trim() : '',
+          phone: phoneKey ? String(row[phoneKey]).trim() : '',
+          dayOfWeek,
+          frequencyWeeks,
+          leadTimeDays,
+          anchorDate
+        });
+      });
+      importPreviewModal(parsed, skippedRows, !nameKey, !dayKey);
+    }catch(err){
+      console.error(err);
+      alert('Could not read that file. Make sure it is a valid .xlsx, .xls, or .csv file.');
+    }finally{
+      e.target.value = '';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function importPreviewModal(parsed, skippedRows, noNameCol, noDayCol){
+  const missingColsWarning = (noNameCol||noDayCol) ? `<div class="hint" style="color:var(--red); margin-bottom:10px;">
+      ${noNameCol ? 'Could not find a vendor name column. ' : ''}${noDayCol ? 'Could not find a day-of-week column.' : ''}
+    </div>` : '';
+  openModal(`
+    <div class="modal-header"><h3>Import preview</h3><span class="modal-close" data-action="close-modal">×</span></div>
+    <div class="modal-body">
+      ${missingColsWarning}
+      <div class="hint" style="margin-bottom:12px;">
+        <strong>${parsed.length}</strong> vendor${parsed.length!==1?'s':''} ready to import.
+        ${skippedRows.length ? `<strong style="color:var(--red);"> ${skippedRows.length}</strong> row${skippedRows.length!==1?'s':''} skipped.` : ''}
+      </div>
+      ${skippedRows.length ? `<div style="max-height:100px; overflow-y:auto; font-size:12px; color:var(--ink-dim); background:#fbfbfa; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-bottom:12px;">${skippedRows.map(escapeHtml).join('<br>')}</div>` : ''}
+      <div style="max-height:280px; overflow-y:auto; border:1px solid var(--line); border-radius:8px;">
+        <table>
+          <thead><tr><th>Name</th><th>Salesman</th><th>Day</th><th>Freq</th><th>Lead</th></tr></thead>
+          <tbody>
+          ${parsed.slice(0,50).map(v=>`<tr>
+            <td>${escapeHtml(v.name)}</td>
+            <td>${escapeHtml(v.salesmanName)}</td>
+            <td>${dayName(v.dayOfWeek,true)}</td>
+            <td>${FREQ_LABELS[v.frequencyWeeks]}</td>
+            <td>${v.leadTimeDays}d</td>
+          </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${parsed.length>50 ? `<div class="hint" style="margin-top:6px;">Showing first 50 of ${parsed.length}.</div>` : ''}
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+        <button type="button" class="btn btn-amber" id="confirm-import-btn" ${parsed.length?'':'disabled'}>Import ${parsed.length} vendor${parsed.length!==1?'s':''}</button>
+      </div>
+    </div>
+  `);
+  const btn = document.getElementById('confirm-import-btn');
+  if(btn){
+    btn.addEventListener('click', ()=>{
+      vendors = vendors.concat(parsed);
+      saveData();
+      closeModal();
+      state.tab='vendors';
+      render();
+    });
+  }
+}
+
+function buildBackupWorkbook(){
+  const wb = XLSX.utils.book_new();
+  const vSheet = XLSX.utils.json_to_sheet(vendors.map(v=>({
+    Name:v.name, Salesman:v.salesmanName, Phone:v.phone, Day:dayName(Number(v.dayOfWeek)),
+    Frequency:FREQ_LABELS[v.frequencyWeeks], 'Lead Time (days)':v.leadTimeDays, 'Anchor Date':v.anchorDate
+  })));
+  const oSheet = XLSX.utils.json_to_sheet(orders.map(o=>{
+    const v = vendorById(o.vendorId);
+    return {
+      Vendor: v?v.name:'Unknown', 'Order Date':o.orderDate, 'Lead Time (days)':o.leadTimeDays,
+      'Expected Delivery':o.expectedDelivery, Status: o.status==='delivered'?'Delivered':(isOverdue(o)?'Overdue':'Pending'),
+      'Delivered Date':o.deliveredDate||'', 'Delivered Time':o.deliveredTime||''
+    };
+  }));
+  const sSheet = XLSX.utils.json_to_sheet(skips.map(s=>{
+    const v = vendorById(s.vendorId);
+    return { Vendor: v?v.name:'Unknown', 'No-Order Date': s.date };
+  }));
+  XLSX.utils.book_append_sheet(wb, vSheet, 'Vendors');
+  XLSX.utils.book_append_sheet(wb, oSheet, 'Orders');
+  XLSX.utils.book_append_sheet(wb, sSheet, 'No-Order Weeks');
+  return wb;
+}
+
+function exportBackup(){
+  const wb = buildBackupWorkbook();
+  const now = new Date();
+  const stamp = toDateStr(now)+'_'+String(now.getHours()).padStart(2,'0')+String(now.getMinutes()).padStart(2,'0');
+  XLSX.writeFile(wb, `vendor-tracker-backup-${stamp}.xlsx`);
+}
+
+function downloadTemplate(){
+  const wsData = [
+    ['Name','Salesman','Phone','Day','Frequency','Lead Time','Anchor Date'],
+    ['Sydis','Karim','03123456','Monday','Every week',4, toDateStr(new Date())],
+    ['Acme Foods','Nour','70654321','Tuesday','Every 2 weeks',3, toDateStr(new Date())]
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Vendors');
+  XLSX.writeFile(wb, 'vendor-import-template.xlsx');
+}
+
+/* ---------------- Modals ---------------- */
+function openModal(html){
+  document.getElementById('modal-box').innerHTML = html;
+  document.getElementById('modal-overlay').classList.add('open');
+}
+function closeModal(){
+  document.getElementById('modal-overlay').classList.remove('open');
+  document.getElementById('modal-box').innerHTML='';
+}
+
+function vendorFormModal(existing){
+  const v = existing || { name:'', salesmanName:'', phone:'', dayOfWeek:1, frequencyWeeks:1, leadTimeDays:4, anchorDate: nextOccurrence(1) };
+  openModal(`
+    <div class="modal-header"><h3>${existing?'Edit Vendor':'Add Vendor'}</h3><span class="modal-close" data-action="close-modal">×</span></div>
+    <div class="modal-body">
+      <div id="vendor-form">
+        <div class="field"><label>Vendor name</label><input required name="name" value="${escapeHtml(v.name)}" placeholder="e.g. Sydis"></div>
+        <div class="field-row">
+          <div class="field"><label>Salesman name</label><input name="salesmanName" value="${escapeHtml(v.salesmanName)}" placeholder="e.g. Karim"></div>
+          <div class="field"><label>Phone number</label><input name="phone" value="${escapeHtml(v.phone)}" placeholder="e.g. 03 123 456"></div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Passes on</label>
+            <select name="dayOfWeek" id="vf-day">
+              ${[0,1,2,3,4,5,6].map(i=>`<option value="${i}" ${Number(v.dayOfWeek)===i?'selected':''}>${dayName(i)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label>Routing frequency</label>
+            <select name="frequencyWeeks">
+              ${Object.entries(FREQ_LABELS).map(([k,l])=>`<option value="${k}" ${String(v.frequencyWeeks)===k?'selected':''}>${l}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Default lead time (days)</label><input type="number" min="0" name="leadTimeDays" value="${v.leadTimeDays}"></div>
+          <div class="field"><label>First passing date (anchor)</label><input type="date" name="anchorDate" id="vf-anchor" value="${v.anchorDate}"></div>
+        </div>
+        <div class="hint">The anchor date sets which week the routing cycle starts from. It's auto-filled to the next matching weekday but you can adjust it.</div>
+        <div class="hint" id="vendor-form-error" style="color:var(--red); display:none;"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+          <button type="button" class="btn btn-amber" id="vendor-form-submit">${existing?'Save changes':'Add vendor'}</button>
+        </div>
+      </div>
+    </div>
+  `);
+  document.getElementById('vf-day').addEventListener('change', (e)=>{
+    document.getElementById('vf-anchor').value = nextOccurrence(Number(e.target.value));
+  });
+  document.getElementById('vendor-form-submit').addEventListener('click', ()=>{
+    const root = document.getElementById('vendor-form');
+    const name = root.querySelector('[name="name"]').value.trim();
+    const errEl = document.getElementById('vendor-form-error');
+    if(!name){
+      errEl.textContent = 'Vendor name is required.';
+      errEl.style.display = 'block';
+      return;
+    }
+    const data = {
+      id: existing ? existing.id : ('v_'+Date.now()+Math.random().toString(36).slice(2,7)),
+      name,
+      salesmanName: root.querySelector('[name="salesmanName"]').value.trim(),
+      phone: root.querySelector('[name="phone"]').value.trim(),
+      dayOfWeek: Number(root.querySelector('[name="dayOfWeek"]').value),
+      frequencyWeeks: Number(root.querySelector('[name="frequencyWeeks"]').value),
+      leadTimeDays: Number(root.querySelector('[name="leadTimeDays"]').value) || 4,
+      anchorDate: root.querySelector('[name="anchorDate"]').value
+    };
+    if(existing){
+      const idx = vendors.findIndex(x=>x.id===existing.id);
+      vendors[idx] = data;
+    } else {
+      vendors.push(data);
+    }
+    saveData();
+    closeModal();
+    render();
+  });
+}
+
+function confirmModal(title, bodyHtml, confirmLabel, onConfirm){
+  openModal(`
+    <div class="modal-header"><h3>${escapeHtml(title)}</h3><span class="modal-close" data-action="close-modal">×</span></div>
+    <div class="modal-body">
+      ${bodyHtml}
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+        <button type="button" class="btn btn-amber" id="confirm-yes-btn">${escapeHtml(confirmLabel||'Yes, continue')}</button>
+      </div>
+    </div>
+  `);
+  document.getElementById('confirm-yes-btn').addEventListener('click', ()=>{ closeModal(); onConfirm(); });
+}
+
+function attemptPlaceOrder(vendorId){
+  const v = vendorById(vendorId);
+  const pending = orders.filter(o=>o.vendorId===vendorId && o.status==='pending');
+  if(pending.length){
+    const rows = pending.map(o=>`Ordered ${o.orderDate} → expected ${o.expectedDelivery}${isOverdue(o)?' <strong style="color:var(--red)">(overdue)</strong>':''}`).join('<br>');
+    confirmModal(
+      'Order not yet received',
+      `<p style="margin-top:0;">${escapeHtml(v?v.name:'This vendor')} already has ${pending.length} order${pending.length>1?'s':''} that ${pending.length>1?'haven\u2019t':'hasn\u2019t'} been marked as delivered:</p>
+       <div class="hint" style="background:#fbfbfa; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:10px 0;">${rows}</div>
+       <p>Place another order anyway?</p>`,
+      'Yes, place another order',
+      ()=>placeOrderModal(vendorId)
+    );
+  } else {
+    placeOrderModal(vendorId);
+  }
+}
+
+function placeOrderModal(vendorId){
+  const v = vendorById(vendorId);
+  const today = todayStr();
+  openModal(`
+    <div class="modal-header"><h3>Place Order — ${escapeHtml(v.name)}</h3><span class="modal-close" data-action="close-modal">×</span></div>
+    <div class="modal-body">
+      <div id="order-form">
+        <div class="field-row">
+          <div class="field"><label>Order date</label><input type="date" name="orderDate" value="${state.todayViewDate || today}"></div>
+          <div class="field"><label>Lead time (days)</label><input type="number" min="0" name="leadTimeDays" value="${v.leadTimeDays}"></div>
+        </div>
+        <div class="hint">Expected delivery will be calculated automatically from the order date + lead time.</div>
+        <div class="hint" id="order-form-error" style="color:var(--red); display:none;"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+          <button type="button" class="btn btn-amber" id="order-form-submit">Place order</button>
+        </div>
+      </div>
+    </div>
+  `);
+  document.getElementById('order-form-submit').addEventListener('click', ()=>{
+    const root = document.getElementById('order-form');
+    const orderDate = root.querySelector('[name="orderDate"]').value;
+    const leadTimeDays = Number(root.querySelector('[name="leadTimeDays"]').value);
+    const errEl = document.getElementById('order-form-error');
+    if(!orderDate || isNaN(leadTimeDays)){
+      errEl.textContent = 'Please fill in the order date and lead time.';
+      errEl.style.display = 'block';
+      return;
+    }
+    const order = {
+      id: 'o_'+Date.now()+Math.random().toString(36).slice(2,7),
+      vendorId,
+      orderDate,
+      leadTimeDays,
+      expectedDelivery: addDays(orderDate, leadTimeDays),
+      status:'pending',
+      deliveredDate:null,
+      deliveredTime:null
+    };
+    orders.push(order);
+    saveData();
+    closeModal();
+    render();
+  });
+}
+
+function deliverModal(orderId){
+  const o = orders.find(x=>x.id===orderId);
+  const v = vendorById(o.vendorId);
+  const now = new Date();
+  const nowTime = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  openModal(`
+    <div class="modal-header"><h3>Mark Delivered — ${escapeHtml(v?v.name:'')}</h3><span class="modal-close" data-action="close-modal">×</span></div>
+    <div class="modal-body">
+      <div id="deliver-form">
+        <div class="field-row">
+          <div class="field"><label>Delivery date</label><input type="date" name="deliveredDate" value="${todayStr()}"></div>
+          <div class="field"><label>Delivery time</label><input type="time" name="deliveredTime" value="${nowTime}"></div>
+        </div>
+        <div class="hint" id="deliver-form-error" style="color:var(--red); display:none;"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+          <button type="button" class="btn btn-amber" id="deliver-form-submit">Confirm delivered</button>
+        </div>
+      </div>
+    </div>
+  `);
+  document.getElementById('deliver-form-submit').addEventListener('click', ()=>{
+    const root = document.getElementById('deliver-form');
+    const deliveredDate = root.querySelector('[name="deliveredDate"]').value;
+    const errEl = document.getElementById('deliver-form-error');
+    if(!deliveredDate){
+      errEl.textContent = 'Please pick a delivery date.';
+      errEl.style.display = 'block';
+      return;
+    }
+    o.status='delivered';
+    o.deliveredDate = deliveredDate;
+    o.deliveredTime = root.querySelector('[name="deliveredTime"]').value;
+    saveData();
+    closeModal();
+    render();
+  });
+}
+
+/* ---------------- Events ---------------- */
+document.querySelectorAll('.nav-item').forEach(item=>{
+  item.addEventListener('click', ()=>{ state.tab = item.dataset.tab; render(); });
+});
+document.getElementById('modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id==='modal-overlay') closeModal();
+});
+document.getElementById('reset-data').addEventListener('click', async ()=>{
+  if(confirm('This will permanently delete all vendors, orders, and no-order records. Continue?')){
+    vendors=[]; orders=[]; skips=[];
+    await saveData();
+    render();
+  }
+});
+document.getElementById('backup-excel-btn').addEventListener('click', exportBackup);
+document.getElementById('sign-out').addEventListener('click', async ()=>{
+  if(confirm('Sign out of Manifest?')){
+    await supabaseClient.auth.signOut();
+    currentUser = null;
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('auth-screen').style.display = 'flex';
+  }
+});
+document.getElementById('auth-login').addEventListener('click', ()=>authAction('login'));
+document.getElementById('auth-signup').addEventListener('click', ()=>authAction('signup'));
+
+function attachMainEvents(){
+  document.querySelectorAll('[data-action="close-modal"]').forEach(el=>el.addEventListener('click', closeModal));
+  const gotoToday = document.querySelector('[data-action="goto-today"]');
+  if(gotoToday) gotoToday.addEventListener('click', ()=>{ state.tab='today'; state.todayViewDate=todayStr(); render(); });
+
+  document.querySelectorAll('[data-action="add-vendor"]').forEach(el=>el.addEventListener('click', ()=>vendorFormModal(null)));
+  document.querySelectorAll('[data-action="import-excel"]').forEach(el=>el.addEventListener('click', triggerImportFile));
+  document.querySelectorAll('[data-action="download-template"]').forEach(el=>el.addEventListener('click', downloadTemplate));
+  const fileInput = document.getElementById('excel-file-input');
+  if(fileInput) fileInput.addEventListener('change', handleImportFile);
+  document.querySelectorAll('[data-action="edit-vendor"]').forEach(el=>el.addEventListener('click', ()=>vendorFormModal(vendorById(el.dataset.id))));
+  document.querySelectorAll('[data-action="delete-vendor"]').forEach(el=>el.addEventListener('click', ()=>{
+    if(confirm('Delete this vendor? Its order history will remain but be unlinked.')){
+      vendors = vendors.filter(v=>v.id!==el.dataset.id);
+      saveData(); render();
+    }
+  }));
+  document.querySelectorAll('[data-action="place-order"]').forEach(el=>el.addEventListener('click', ()=>attemptPlaceOrder(el.dataset.id)));
+  document.querySelectorAll('[data-action="deliver"]').forEach(el=>el.addEventListener('click', ()=>deliverModal(el.dataset.id)));
+  document.querySelectorAll('[data-action="delete-order"]').forEach(el=>el.addEventListener('click', ()=>{
+    if(confirm('Delete this order record?')){
+      orders = orders.filter(o=>o.id!==el.dataset.id);
+      saveData(); render();
+    }
+  }));
+
+  document.querySelectorAll('[data-filter]').forEach(el=>el.addEventListener('click', ()=>{
+    state.orderFilter = el.dataset.filter; render();
+  }));
+
+  document.querySelectorAll('[data-action="no-order"]').forEach(el=>el.addEventListener('click', ()=>{
+    addSkip(el.dataset.id, el.dataset.date);
+    render();
+  }));
+  document.querySelectorAll('[data-action="undo-skip"]').forEach(el=>el.addEventListener('click', ()=>{
+    removeSkip(el.dataset.id, el.dataset.date);
+    render();
+  }));
+
+  const vendorSearchInput = document.getElementById('vendor-search-input');
+  if(vendorSearchInput){
+    vendorSearchInput.addEventListener('input', (e)=>{
+      state.vendorSearch = e.target.value;
+      filterRowsBySearch('#vendor-list', state.vendorSearch, '#vendor-no-match');
+    });
+  }
+  const todaySearchInput = document.getElementById('today-search-input');
+  if(todaySearchInput){
+    todaySearchInput.addEventListener('input', (e)=>{
+      state.todaySearch = e.target.value;
+      filterRowsBySearch('#today-scheduled-list', state.todaySearch, '#today-scheduled-no-match');
+      filterRowsBySearch('#today-handled-list', state.todaySearch, '#today-handled-no-match');
+      filterRowsBySearch('#today-other-list', state.todaySearch, '#today-no-match');
+    });
+  }
+  // apply any previously typed search terms after re-render
+  if(state.vendorSearch) filterRowsBySearch('#vendor-list', state.vendorSearch, '#vendor-no-match');
+  if(state.todaySearch){
+    filterRowsBySearch('#today-scheduled-list', state.todaySearch, '#today-scheduled-no-match');
+    filterRowsBySearch('#today-handled-list', state.todaySearch, '#today-handled-no-match');
+    filterRowsBySearch('#today-other-list', state.todaySearch, '#today-no-match');
+  }
+
+  const prev = document.querySelector('[data-action="date-prev"]');
+  const next = document.querySelector('[data-action="date-next"]');
+  const todayBtn = document.querySelector('[data-action="date-today"]');
+  if(prev) prev.addEventListener('click', ()=>{ state.todayViewDate = addDays(state.todayViewDate,-1); render(); });
+  if(next) next.addEventListener('click', ()=>{ state.todayViewDate = addDays(state.todayViewDate,1); render(); });
+  if(todayBtn) todayBtn.addEventListener('click', ()=>{ state.todayViewDate = todayStr(); render(); });
+}
+
+initSupabase();
+</script>
+</body>
+</html>
