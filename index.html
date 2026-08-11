@@ -7,7 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
     --bg: #eef1ef;
@@ -194,24 +193,7 @@
 </style>
 </head>
 <body>
-
-<div id="auth-screen" style="display:flex;min-height:100vh;align-items:center;justify-content:center;background:var(--bg);padding:24px;">
-  <div style="width:min(420px,100%);background:#fff;border:1px solid var(--line);border-radius:14px;padding:30px;box-shadow:0 12px 40px rgba(0,0,0,.08);">
-    <div style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:700;">Manifest</div>
-    <div style="font-size:13px;color:var(--ink-dim);margin:5px 0 24px;">Vendor Order Tracker · Cloud Sync</div>
-    <div id="auth-error" style="display:none;background:var(--red-bg);color:var(--red);padding:10px 12px;border-radius:8px;font-size:13px;margin-bottom:14px;"></div>
-    <div class="field"><label>Email</label><input id="auth-email" type="email" autocomplete="email" placeholder="you@example.com"></div>
-    <div class="field"><label>Password</label><input id="auth-password" type="password" autocomplete="current-password" placeholder="••••••••"></div>
-    <div style="display:flex;gap:8px;margin-top:16px;">
-      <button class="btn btn-amber" id="auth-login" style="flex:1;">Sign in</button>
-      <button class="btn btn-ghost" id="auth-signup" style="flex:1;">Create account</button>
-    </div>
-    <div style="font-size:11px;color:var(--ink-dim);margin-top:16px;line-height:1.5;">
-      Your vendors, orders and no-order records are stored in Supabase and follow your account across devices.
-    </div>
-  </div>
-</div>
-<div id="app" style="display:none;">
+<div id="app">
   <div id="sidebar">
     <div class="brand">
       <div class="brand-mark">Manifest</div>
@@ -225,10 +207,7 @@
       <div id="storage-status" style="margin-bottom:10px;"></div>
       <button class="btn btn-ghost btn-sm" id="backup-excel-btn" style="width:100%; justify-content:center; color:#fff; border-color:rgba(255,255,255,0.25);">⇩ Backup to Excel</button>
 
-      <div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
-      <span class="reset-link" id="reset-data">Reset all data</span>
-      <span class="reset-link" id="sign-out" style="color:#fff;">Sign out</span>
-    </div>
+      <div style="margin-top:10px;"><span class="reset-link" id="reset-data">Reset all data</span></div>
     </div>
   </div>
   <div id="main"></div>
@@ -240,182 +219,57 @@
 
 <script>
 /* ---------------- State & storage ---------------- */
-const SUPABASE_URL = 'https://xyhnujijhxgjpgnqgmkm.supabase.co';
-const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_sToKsvtZRSnbyK76C69sSg_oB7-P_BH';
-const LOCAL_KEY = 'vendor-tracker-app-data';
-
-let supabaseClient = null;
-let currentUser = null;
 let vendors = [];
 let orders = [];
 let skips = [];
 let storageOK = true;
-let storageMode = 'cloud';
+let storageMode = 'none'; // 'claude' | 'local' | 'none'
+const LOCAL_KEY = 'vendor-tracker-app-data';
 
-function supabaseConfigured(){
-  return SUPABASE_URL.startsWith('https://')
-    && !SUPABASE_URL.includes('PASTE_YOUR')
-    && !SUPABASE_PUBLISHABLE_KEY.includes('PASTE_YOUR');
-}
-
-function localGet(){
+async function storageGetData(){
+  if(window.storage){
+    try{
+      const res = await window.storage.get('app-data', false);
+      storageMode = 'claude';
+      return res && res.value ? JSON.parse(res.value) : null;
+    }catch(e){
+      // fall through to local storage
+    }
+  }
   try{
     const raw = localStorage.getItem(LOCAL_KEY);
+    storageMode = 'local';
     return raw ? JSON.parse(raw) : null;
   }catch(e){
-    console.error('Could not read local backup', e);
+    storageMode = 'none';
     return null;
   }
 }
 
-function localSet(dataObj){
-  try{ localStorage.setItem(LOCAL_KEY, JSON.stringify(dataObj)); }catch(e){}
-}
-
-async function loadCloudData(){
-  const { data, error } = await supabaseClient
-    .from('manifest_data')
-    .select('data')
-    .eq('user_id', currentUser.id)
-    .maybeSingle();
-
-  if(error) throw error;
-
-  if(data && data.data){
-    vendors = Array.isArray(data.data.vendors) ? data.data.vendors : [];
-    orders = Array.isArray(data.data.orders) ? data.data.orders : [];
-    skips = Array.isArray(data.data.skips) ? data.data.skips : [];
-    localSet({vendors, orders, skips});
-    return true;
+async function storageSetData(dataObj){
+  const json = JSON.stringify(dataObj);
+  let savedToClaude = false;
+  if(window.storage){
+    try{
+      await window.storage.set('app-data', json, false);
+      savedToClaude = true;
+      storageMode = 'claude';
+    }catch(e){ /* fall through */ }
   }
-
-  // If this account has no cloud data yet, offer its existing browser data
-  // as the first cloud copy.
-  const local = localGet();
-  if(local && (local.vendors?.length || local.orders?.length || local.skips?.length)){
-    vendors = local.vendors || [];
-    orders = local.orders || [];
-    skips = local.skips || [];
-    await saveData(true);
-    return true;
-  }
-
-  vendors = [];
-  orders = [];
-  skips = [];
-  return false;
-}
-
-async function saveData(silent=false){
-  const payload = {vendors, orders, skips};
-  localSet(payload); // offline fallback
-
-  if(!supabaseClient || !currentUser) return;
-
+  // Always mirror to localStorage too, so a reload outside Claude.ai (or a
+  // failed Claude storage call) still keeps the data.
   try{
-    const { error } = await supabaseClient
-      .from('manifest_data')
-      .upsert({
-        user_id: currentUser.id,
-        data: payload,
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'user_id' });
-
-    if(error) throw error;
-    storageMode = 'cloud';
-    state.lastSavedAt = new Date();
+    localStorage.setItem(LOCAL_KEY, json);
+    if(!savedToClaude) storageMode = 'local';
   }catch(e){
-    storageMode = 'local';
-    console.error('Cloud save failed:', e);
-    if(!silent) alert('Cloud save failed. Your latest data is still saved in this browser.\\n\\n' + e.message);
-  }
-  updateStorageStatusUI();
-}
-
-function updateStorageStatusUI(){
-  const el = document.getElementById('storage-status');
-  if(!el) return;
-  const time = state.lastSavedAt ? state.lastSavedAt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : null;
-  const cloud = storageMode === 'cloud';
-  const dot = cloud ? '#3fa34d' : '#d98e04';
-  const modeText = cloud
-    ? 'Synced to Supabase — available on your other devices.'
-    : 'Offline/local copy — changes will sync when cloud access is restored.';
-  el.innerHTML = `
-    <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#fff;">
-      <span style="width:7px;height:7px;border-radius:50%;background:${dot};display:inline-block;"></span>
-      ${time ? 'Saved '+time : (cloud ? 'Cloud ready' : 'Local copy')}
-    </div>
-    <div style="font-size:10.5px;color:var(--sidebar-ink);opacity:.7;margin-top:3px;line-height:1.4;">${modeText}</div>
-  `;
-}
-
-async function initSupabase(){
-  if(!supabaseConfigured()){
-    showAuthError('Supabase is not configured yet. Open this file and add your Supabase URL and publishable key near the top of the script.');
-    return;
-  }
-
-  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-    auth: { persistSession:true, autoRefreshToken:true, detectSessionInUrl:true }
-  });
-
-  const { data } = await supabaseClient.auth.getSession();
-  if(data.session) await startApp(data.session.user);
-
-  supabaseClient.auth.onAuthStateChange(async (_event, session)=>{
-    if(session) await startApp(session.user);
-  });
-}
-
-async function startApp(user){
-  currentUser = user;
-  document.getElementById('auth-screen').style.display = 'none';
-  document.getElementById('app').style.display = 'flex';
-
-  try{
-    await loadCloudData();
-    state.lastSavedAt = new Date();
-    updateStorageStatusUI();
-    render();
-  }catch(e){
-    showAuthError('Could not load your cloud data: ' + e.message);
-    console.error(e);
+    if(!savedToClaude){ storageMode = 'none'; console.error('No storage available', e); }
   }
 }
-
-function showAuthError(message){
-  const el = document.getElementById('auth-error');
-  if(el){ el.textContent = message; el.style.display = 'block'; }
-}
-
-async function authAction(type){
-  const email = document.getElementById('auth-email').value.trim();
-  const password = document.getElementById('auth-password').value;
-  if(!email || !password){
-    showAuthError('Enter both your email and password.');
-    return;
-  }
-  if(password.length < 6){
-    showAuthError('Password must be at least 6 characters.');
-    return;
-  }
-  showAuthError('');
-  const fn = type === 'signup'
-    ? supabaseClient.auth.signUp({email, password})
-    : supabaseClient.auth.signInWithPassword({email, password});
-  const {data, error} = await fn;
-  if(error){ showAuthError(error.message); return; }
-  if(type === 'signup' && !data.session){
-    showAuthError('Account created. Check your email to confirm it, then sign in.');
-  }
-}
-
 let state = { tab:'dashboard', todayViewDate: toDateStr(new Date()), orderFilter:'all', vendorSearch:'', vendorDayFilter:'all', todaySearch:'', otherVendorsShown:25 };
 
-function loadData(){
+async function loadData(){
   try{
-    const parsed = storageGetData();
+    const parsed = await storageGetData();
     if(parsed){
       vendors = parsed.vendors || [];
       orders = parsed.orders || [];
@@ -428,9 +282,9 @@ function loadData(){
   render();
 }
 
-function saveData(){
+async function saveData(){
   try{
-    storageSetData({vendors, orders, skips});
+    await storageSetData({vendors, orders, skips});
     state.lastSavedAt = new Date();
   }catch(e){
     console.error('Storage save failed', e);
@@ -442,8 +296,9 @@ function updateStorageStatusUI(){
   const el = document.getElementById('storage-status');
   if(!el) return;
   const time = state.lastSavedAt ? state.lastSavedAt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : null;
-  let dot = '#3fa34d', modeText = 'Saved in this browser. Use Backup to Excel for a portable copy.';
-  if(storageMode==='local'){ dot='#d98e04'; modeText = 'Saved in this browser. Use "Backup to Excel" regularly, or import your backup on another device.'; }
+  let dot = '#6b7280', modeText = 'Not saved yet';
+  if(storageMode==='claude'){ dot='#3fa34d'; modeText = 'Synced to your Claude account — stays put across browsers & devices while signed in.'; }
+  else if(storageMode==='local'){ dot='#d98e04'; modeText = 'Saved in this browser only. Use "Backup to Excel" regularly, or switch browsers/devices and it will not follow.'; }
   else { dot='#c1443c'; modeText = 'No storage available right now — back up to Excel to avoid losing data.'; }
   el.innerHTML = `
     <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#fff;">
@@ -1274,16 +1129,6 @@ document.getElementById('reset-data').addEventListener('click', async ()=>{
   }
 });
 document.getElementById('backup-excel-btn').addEventListener('click', exportBackup);
-document.getElementById('sign-out').addEventListener('click', async ()=>{
-  if(confirm('Sign out of Manifest?')){
-    await supabaseClient.auth.signOut();
-    currentUser = null;
-    document.getElementById('app').style.display = 'none';
-    document.getElementById('auth-screen').style.display = 'flex';
-  }
-});
-document.getElementById('auth-login').addEventListener('click', ()=>authAction('login'));
-document.getElementById('auth-signup').addEventListener('click', ()=>authAction('signup'));
 
 function attachMainEvents(){
   document.querySelectorAll('[data-action="close-modal"]').forEach(el=>el.addEventListener('click', closeModal));
@@ -1356,7 +1201,7 @@ function attachMainEvents(){
   if(todayBtn) todayBtn.addEventListener('click', ()=>{ state.todayViewDate = todayStr(); render(); });
 }
 
-initSupabase();
+loadData();
 </script>
 </body>
 </html>
