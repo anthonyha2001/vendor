@@ -294,7 +294,7 @@
     <div class="nav-item" data-tab="vendors"><span class="nav-icon">☰</span> Vendors</div>
     <div class="sidebar-footer">
       <div id="storage-status" style="margin-bottom:10px;"></div>
-      <button class="btn btn-ghost btn-sm" id="backup-excel-btn" style="width:100%; justify-content:center; color:#fff; border-color:rgba(255,255,255,0.25);">⇩ Backup to Excel</button>
+      <button class="btn btn-ghost btn-sm" id="backup-excel-btn" style="width:100%; justify-content:center; color:#183F81; border-color:rgba(255,255,255,0.25);">⇩ Backup to Excel</button>
 
       <div style="margin-top:10px;"><span class="reset-link" id="reset-data">Reset all data</span></div>
     </div>
@@ -731,17 +731,7 @@ function renderToday(){
       <input type="text" class="search-bar" id="today-search-input" placeholder="Search all vendors or salesmen…" value="${escapeHtml(state.todaySearch||'')}">
     </div>
 
-    <div class="panel">
-      <div class="panel-header">
-        <div class="panel-title">Awaiting delivery${overdueCount ? ` <span class="badge badge-overdue" style="margin-left:6px;">${overdueCount} overdue</span>` : ''}</div>
-      </div>
-      <div class="panel-body">
-        <div id="today-awaiting-list">
-          ${awaitingDelivery.length ? awaitingDelivery.map(v=>vendorRow(v, isDueOn(v,d))).join('') : '<div class="empty-state">No orders waiting on delivery right now.</div>'}
-        </div>
-        <div class="empty-state" id="today-awaiting-no-match" style="display:none;">No vendors match your search.</div>
-      </div>
-    </div>
+    
 
     <div class="panel">
       <div class="panel-header"><div class="panel-title">Still to order — scheduled for ${formatDateNice(d)}</div></div>
@@ -752,7 +742,9 @@ function renderToday(){
         <div class="empty-state" id="today-scheduled-no-match" style="display:none;">No vendors match your search.</div>
       </div>
     </div>
-
+<div class="panel-header">
+        <div class="panel-title">Awaiting delivery${overdueCount ? ` <span class="badge badge-overdue" style="margin-left:6px;">${overdueCount} overdue</span>` : ''}</div>
+      </div>
     <div class="panel">
       <div class="panel-header">
         <div class="panel-title">No order logged — ${formatDateNice(d)}</div>
@@ -774,6 +766,18 @@ function renderToday(){
           ${otherNeedOrder.length ? otherNeedOrder.map(v=>vendorRow(v,false)).join('') : '<div class="empty-state">No other vendors waiting — add some in the Vendors tab.</div>'}
         </div>
         <div class="empty-state" id="today-no-match" style="display:none;">No vendors match your search.</div>
+      </div>
+    </div>
+<div class="panel">
+       <div class="panel-header">
+        <div class="panel-title">Ordered - Waiting delivery</div>
+      </div>
+
+      <div class="panel-body">
+        <div id="today-awaiting-list">
+          ${awaitingDelivery.length ? awaitingDelivery.map(v=>vendorRow(v, isDueOn(v,d))).join('') : '<div class="empty-state">No orders waiting on delivery right now.</div>'}
+        </div>
+        <div class="empty-state" id="today-awaiting-no-match" style="display:none;">No vendors match your search.</div>
       </div>
     </div>
   `;
