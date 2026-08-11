@@ -223,10 +223,50 @@ let vendors = [];
 let orders = [];
 let skips = [];
 let storageOK = true;
-let storageMode = 'none'; // 'claude' | 'local' | 'none'
+let storageMode = 'none'; // 'supabase' | 'claude' | 'local' | 'none'
 const LOCAL_KEY = 'vendor-tracker-app-data';
 
+/* Supabase config — public URL + publishable key, safe to expose in client code.
+   Data access is controlled by the Row Level Security policies set on the app_data table. */
+const SUPABASE_URL = 'https://uupeppqxylbfbzgafddt.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_k3X5kDt64z7W9Ny69TcbFA_35OXi5w3';
+const SUPABASE_ROW_ID = 'shared';
+const SUPABASE_ENABLED = !!(SUPABASE_URL && SUPABASE_ANON_KEY);
+const SUPABASE_HEADERS = {
+  apikey: SUPABASE_ANON_KEY,
+  Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
+  'Content-Type': 'application/json'
+};
+
+async function supabaseGetPayload(){
+  const url = `${SUPABASE_URL}/rest/v1/app_data?id=eq.${SUPABASE_ROW_ID}&select=payload`;
+  const res = await fetch(url, { headers: SUPABASE_HEADERS });
+  if(!res.ok) throw new Error('Supabase read failed: '+res.status);
+  const rows = await res.json();
+  return (rows && rows.length) ? rows[0].payload : null;
+}
+
+async function supabaseSetPayload(dataObj){
+  const url = `${SUPABASE_URL}/rest/v1/app_data?id=eq.${SUPABASE_ROW_ID}`;
+  const res = await fetch(url, {
+    method: 'PATCH',
+    headers: { ...SUPABASE_HEADERS, Prefer: 'return=minimal' },
+    body: JSON.stringify({ payload: dataObj, updated_at: new Date().toISOString() })
+  });
+  if(!res.ok) throw new Error('Supabase write failed: '+res.status);
+}
+
 async function storageGetData(){
+  if(SUPABASE_ENABLED){
+    try{
+      const payload = await supabaseGetPayload();
+      storageMode = 'supabase';
+      return payload;
+    }catch(e){
+      console.error('Supabase read failed, falling back', e);
+      // fall through
+    }
+  }
   if(window.storage){
     try{
       const res = await window.storage.get('app-data', false);
@@ -248,21 +288,30 @@ async function storageGetData(){
 
 async function storageSetData(dataObj){
   const json = JSON.stringify(dataObj);
-  let savedToClaude = false;
-  if(window.storage){
+  let savedRemote = false;
+  if(SUPABASE_ENABLED){
+    try{
+      await supabaseSetPayload(dataObj);
+      savedRemote = true;
+      storageMode = 'supabase';
+    }catch(e){
+      console.error('Supabase write failed, falling back', e);
+    }
+  }
+  if(!savedRemote && window.storage){
     try{
       await window.storage.set('app-data', json, false);
-      savedToClaude = true;
+      savedRemote = true;
       storageMode = 'claude';
     }catch(e){ /* fall through */ }
   }
-  // Always mirror to localStorage too, so a reload outside Claude.ai (or a
-  // failed Claude storage call) still keeps the data.
+  // Always mirror to localStorage too, so a reload while offline (or a
+  // failed remote save) still keeps the data.
   try{
     localStorage.setItem(LOCAL_KEY, json);
-    if(!savedToClaude) storageMode = 'local';
+    if(!savedRemote) storageMode = 'local';
   }catch(e){
-    if(!savedToClaude){ storageMode = 'none'; console.error('No storage available', e); }
+    if(!savedRemote){ storageMode = 'none'; console.error('No storage available', e); }
   }
 }
 let state = { tab:'dashboard', todayViewDate: toDateStr(new Date()), orderFilter:'all', vendorSearch:'', vendorDayFilter:'all', todaySearch:'', otherVendorsShown:25 };
@@ -297,7 +346,8 @@ function updateStorageStatusUI(){
   if(!el) return;
   const time = state.lastSavedAt ? state.lastSavedAt.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : null;
   let dot = '#6b7280', modeText = 'Not saved yet';
-  if(storageMode==='claude'){ dot='#3fa34d'; modeText = 'Synced to your Claude account — stays put across browsers & devices while signed in.'; }
+  if(storageMode==='supabase'){ dot='#3fa34d'; modeText = 'Synced to shared cloud database — updates automatically for everyone using this link.'; }
+  else if(storageMode==='claude'){ dot='#3fa34d'; modeText = 'Synced to your Claude account — stays put across browsers & devices while signed in.'; }
   else if(storageMode==='local'){ dot='#d98e04'; modeText = 'Saved in this browser only. Use "Backup to Excel" regularly, or switch browsers/devices and it will not follow.'; }
   else { dot='#c1443c'; modeText = 'No storage available right now — back up to Excel to avoid losing data.'; }
   el.innerHTML = `
@@ -1200,6 +1250,30 @@ function attachMainEvents(){
   if(next) next.addEventListener('click', ()=>{ state.todayViewDate = addDays(state.todayViewDate,1); render(); });
   if(todayBtn) todayBtn.addEventListener('click', ()=>{ state.todayViewDate = todayStr(); render(); });
 }
+
+async function pollRemoteChanges(){
+  if(!SUPABASE_ENABLED) return;
+  const modalOpen = document.getElementById('modal-overlay').classList.contains('open');
+  if(modalOpen) return; // don't yank data out from under an in-progress edit
+  try{
+    const payload = await supabaseGetPayload();
+    if(!payload) return;
+    const incoming = JSON.stringify({vendors:payload.vendors||[], orders:payload.orders||[], skips:payload.skips||[]});
+    const current = JSON.stringify({vendors, orders, skips});
+    if(incoming !== current){
+      vendors = payload.vendors || [];
+      orders = payload.orders || [];
+      skips = payload.skips || [];
+      storageMode = 'supabase';
+      updateStorageStatusUI();
+      render();
+    }
+  }catch(e){
+    console.error('Background sync check failed', e);
+  }
+}
+setInterval(pollRemoteChanges, 15000);
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) pollRemoteChanges(); });
 
 loadData();
 </script>
