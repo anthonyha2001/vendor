@@ -228,6 +228,12 @@
     display:grid; grid-template-columns:repeat(7,minmax(150px,1fr)); gap:10px;
     margin-bottom:24px; align-items:stretch; overflow-x:auto; padding-bottom:4px;
   }
+  .today-tabs{display:flex;gap:6px;background:#eef2f7;border:1px solid #d8e0eb;border-radius:12px;padding:5px;margin-bottom:16px;max-width:520px;}
+  .today-tab{flex:1;border:0;background:transparent;border-radius:9px;padding:11px 16px;cursor:pointer;color:var(--ink-dim);font-family:inherit;font-weight:700;display:flex;align-items:center;justify-content:center;gap:9px;transition:.15s ease;}
+  .today-tab span{font-size:13px;}
+  .today-tab small{font-size:10px;font-family:'IBM Plex Mono',monospace;font-weight:600;opacity:.75;}
+  .today-tab.active{background:#fff;color:var(--primary);box-shadow:0 2px 7px rgba(27,36,48,.09);}
+  .today-tab:hover:not(.active){background:rgba(255,255,255,.55);}
   .week-day-col{
     background:#fff; border:1px solid #d8e0eb; border-radius:12px; min-height:250px;
     display:flex; flex-direction:column; overflow:hidden; box-shadow:0 2px 8px rgba(27,36,48,.035);
@@ -289,12 +295,12 @@
     </div>
     <div class="nav-item" data-tab="dashboard"><span class="nav-icon">▤</span> Dashboard</div>
     <div class="nav-item" data-tab="today"><span class="nav-icon">◷</span> Today's Run</div>
-    <div class="nav-item" data-tab="orders"><span class="nav-icon">▦</span> Orders <span class="nav-badge" id="nav-overdue-badge" style="display:none"></span></div>
     <div class="nav-item" data-tab="warehouse"><span class="nav-icon">▥</span> Warehouse</div>
     <div class="nav-item" data-tab="vendors"><span class="nav-icon">☰</span> Vendors</div>
     <div class="sidebar-footer">
       <div id="storage-status" style="margin-bottom:10px;"></div>
       <button class="btn btn-ghost btn-sm" id="backup-excel-btn" style="width:100%; justify-content:center; color:#183F81; border-color:rgba(255,255,255,0.25);">⇩ Backup to Excel</button>
+      <button class="btn btn-ghost btn-sm" id="sync-now-btn" style="width:100%; justify-content:center; color:#183F81; border-color:rgba(255,255,255,0.25); margin-top:8px;">⟳ Sync now</button>
 
       <div style="margin-top:10px;"><span class="reset-link" id="reset-data">Reset all data</span></div>
     </div>
@@ -403,7 +409,7 @@ async function storageSetData(dataObj){
     if(!savedRemote){ storageMode = 'none'; console.error('No storage available', e); }
   }
 }
-let state = { tab:'dashboard', todayViewDate: toDateStr(new Date()), orderFilter:'all', vendorSearch:'', vendorDayFilter:'all', todaySearch:'', otherVendorsShown:25 };
+let state = { tab:'dashboard', todayViewDate: toDateStr(new Date()), todaySubtab:'orders', orderFilter:'all', vendorSearch:'', vendorDayFilter:'all', todaySearch:'', otherVendorsShown:25 };
 
 async function loadData(){
   try{
@@ -413,6 +419,7 @@ async function loadData(){
       orders = parsed.orders || [];
       skips = parsed.skips || [];
     }
+    if(storageMode==='supabase') state.lastSyncCheckAt = new Date();
   }catch(e){
     storageOK = false;
   }
@@ -439,12 +446,19 @@ function updateStorageStatusUI(){
   else if(storageMode==='claude'){ dot='#3fa34d'; modeText = 'Synced to your Claude account — stays put across browsers & devices while signed in.'; }
   else if(storageMode==='local'){ dot='#d98e04'; modeText = 'Saved in this browser only. Use "Backup to Excel" regularly, or switch browsers/devices and it will not follow.'; }
   else { dot='#c1443c'; modeText = 'No storage available right now — back up to Excel to avoid losing data.'; }
+  let checkedText = '';
+  if(SUPABASE_ENABLED && state.lastSyncCheckAt){
+    const secsAgo = Math.max(0, Math.round((Date.now()-state.lastSyncCheckAt.getTime())/1000));
+    const label = secsAgo < 5 ? 'just now' : (secsAgo < 60 ? `${secsAgo}s ago` : `${Math.round(secsAgo/60)}m ago`);
+    checkedText = `<div style="font-size:10px; color:var(--sidebar-ink); opacity:0.55; margin-top:2px;">Checked for updates ${label}</div>`;
+  }
   el.innerHTML = `
     <div style="display:flex; align-items:center; gap:6px; font-size:11px; color:#fff;">
       <span style="width:7px; height:7px; border-radius:50%; background:${dot}; display:inline-block;"></span>
       ${time ? 'Saved '+time : 'Not saved yet'}
     </div>
     <div style="font-size:10.5px; color:var(--sidebar-ink); opacity:0.7; margin-top:3px; line-height:1.4;">${modeText}</div>
+    ${checkedText}
   `;
 }
 
@@ -548,6 +562,7 @@ function matchesSearch(v, term){
 function updateOverdueBadge(){
   const count = orders.filter(isOverdue).length;
   const el = document.getElementById('nav-overdue-badge');
+  if(!el) return;
   if(count>0){ el.style.display='inline-block'; el.textContent=count; }
   else{ el.style.display='none'; }
 }
@@ -559,7 +574,6 @@ function render(){
   const main = document.getElementById('main');
   if(state.tab==='dashboard') main.innerHTML = renderDashboard();
   else if(state.tab==='today') main.innerHTML = renderToday();
-  else if(state.tab==='orders') main.innerHTML = renderOrders();
   else if(state.tab==='warehouse') main.innerHTML = renderWarehouse();
   else if(state.tab==='vendors') main.innerHTML = renderVendors();
   attachMainEvents();
@@ -651,6 +665,7 @@ function renderDashboard(){
 function renderToday(){
   const d = state.todayViewDate;
   const isToday = d===todayStr();
+  const activeSubtab = state.todaySubtab || 'orders';
 
   function isVendorHandled(v){
     const pendingOrder = pendingOrderForVendor(v.id);
@@ -659,13 +674,9 @@ function renderToday(){
 
   const dueVendorsAll = vendors.filter(v=>isDueOn(v,d));
   const otherVendorsAll = vendors.filter(v=>!isDueOn(v,d));
-
   const dueNeedOrder = dueVendorsAll.filter(v=>!isVendorHandled(v));
   const otherNeedOrder = otherVendorsAll.filter(v=>!isVendorHandled(v));
 
-  // Awaiting delivery is global (not tied to the viewed date) — a placed order
-  // stays "awaiting delivery" until you mark it delivered, regardless of which
-  // day you're looking at. Overdue orders float to the top for quick action.
   const awaitingDelivery = vendors
     .filter(v=>!!pendingOrderForVendor(v.id))
     .sort((a,b)=>{
@@ -673,8 +684,6 @@ function renderToday(){
       return oa.expectedDelivery < ob.expectedDelivery ? -1 : (oa.expectedDelivery > ob.expectedDelivery ? 1 : 0);
     });
   const overdueCount = awaitingDelivery.filter(v=>isOverdue(pendingOrderForVendor(v.id))).length;
-
-  // "No order logged" is date-specific — it only applies to the day you skipped.
   const skippedForDate = vendors.filter(v=>!pendingOrderForVendor(v.id) && hasSkipOnDate(v.id, d));
 
   function vendorRow(v, scheduled){
@@ -685,17 +694,28 @@ function renderToday(){
     const searchKey = ((v.name||'')+' '+(v.salesmanName||'')+' '+(v.phone||'')).toLowerCase();
     const handled = !!pendingOrder || skipped;
     let actions;
-    if(pendingOrder){
-      const overdue = isOverdue(pendingOrder);
-      actions = `<span class="badge ${overdue?'badge-overdue':'badge-pending'}">${overdue?'Overdue':'Not received'} · exp ${pendingOrder.expectedDelivery}</span>
-        <button class="btn btn-amber btn-sm" data-action="deliver" data-id="${pendingOrder.id}">Mark Delivered</button>
-        <button class="btn btn-ghost btn-sm" data-action="place-order" data-id="${v.id}">Order Again</button>`;
-    } else if(skipped){
-      actions = `<span class="badge badge-pending">No order</span><button class="btn btn-ghost btn-sm" data-action="undo-skip" data-id="${v.id}" data-date="${d}">Undo</button>`;
+
+    if(activeSubtab==='receiving'){
+      if(pendingOrder){
+        const overdue = isOverdue(pendingOrder);
+        actions = `<span class="badge ${overdue?'badge-overdue':'badge-pending'}">${overdue?'Overdue':'Awaiting'} · exp ${pendingOrder.expectedDelivery}</span>
+          <button class="btn btn-amber btn-sm" data-action="deliver" data-id="${pendingOrder.id}">✓ Mark Received</button>`;
+      } else {
+        actions = `<span class="badge badge-delivered">No pending delivery</span>`;
+      }
     } else {
-      actions = `<button class="btn ${scheduled?'btn-amber':'btn-ghost'} btn-sm" data-action="place-order" data-id="${v.id}">Place Order</button>
-        <button class="btn btn-ghost btn-sm" data-action="no-order" data-id="${v.id}" data-date="${d}">No Order</button>`;
+      if(pendingOrder){
+        const overdue = isOverdue(pendingOrder);
+        actions = `<span class="badge ${overdue?'badge-overdue':'badge-pending'}">${overdue?'Overdue':'Ordered'} · exp ${pendingOrder.expectedDelivery}</span>
+          <button class="btn btn-ghost btn-sm" data-action="deliver" data-id="${pendingOrder.id}">Mark Received</button>`;
+      } else if(skipped){
+        actions = `<span class="badge badge-pending">No order</span><button class="btn btn-ghost btn-sm" data-action="undo-skip" data-id="${v.id}" data-date="${d}">Undo</button>`;
+      } else {
+        actions = `<button class="btn ${scheduled?'btn-amber':'btn-ghost'} btn-sm" data-action="place-order" data-id="${v.id}">Place Order</button>
+          <button class="btn btn-ghost btn-sm" data-action="no-order" data-id="${v.id}" data-date="${d}">No Order</button>`;
+      }
     }
+
     return `<div class="tag-row ${handled?'handled':''} ${pendingOrder && isOverdue(pendingOrder)?'overdue':''}" data-search="${escapeHtml(searchKey)}">
       <div class="tag-main">
         <div class="tag-name">${escapeHtml(v.name)} ${scheduled?'<span class="badge badge-due">Scheduled</span>':''}</div>
@@ -707,17 +727,66 @@ function renderToday(){
           <span>Last delivery: ${lastDel ? (lastDel.deliveredDate + (lastDel.deliveredTime? ' '+lastDel.deliveredTime:'')) : '—'}</span>
         </div>
       </div>
-      <div class="tag-actions">
-        ${actions}
-      </div>
+      <div class="tag-actions">${actions}</div>
     </div>`;
   }
+
+  const ordersContent = `
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Scheduled orders</div>
+        <span class="badge badge-due">${dueNeedOrder.length} to order</span>
+      </div>
+      <div class="panel-body">
+        <div id="today-scheduled-list">
+          ${dueNeedOrder.length ? dueNeedOrder.map(v=>vendorRow(v,true)).join('') : '<div class="empty-state">No vendor is waiting on an order for this date.</div>'}
+        </div>
+        <div class="empty-state" id="today-scheduled-no-match" style="display:none;">No vendors match your search.</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><div class="panel-title">Other vendors — order early or out of turn</div></div>
+      <div class="panel-body">
+        <div id="today-other-list">
+          ${otherNeedOrder.length ? otherNeedOrder.map(v=>vendorRow(v,false)).join('') : '<div class="empty-state">No other vendors waiting — add some in the Vendors tab.</div>'}
+        </div>
+        <div class="empty-state" id="today-no-match" style="display:none;">No vendors match your search.</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><div class="panel-title">No order logged — ${formatDateNice(d)}</div></div>
+      <div class="panel-body">
+        <div id="today-skipped-list">
+          ${skippedForDate.length ? skippedForDate.map(v=>vendorRow(v,isDueOn(v,d))).join('') : '<div class="empty-state">Nothing logged as "no order" for this date.</div>'}
+        </div>
+        <div class="empty-state" id="today-skipped-no-match" style="display:none;">No vendors match your search.</div>
+      </div>
+    </div>`;
+
+  const receivingContent = `
+    <div class="cards-row" style="margin-bottom:16px;">
+      <div class="stat-card primary-stat"><div class="stat-num">${awaitingDelivery.length}</div><div class="stat-label">Awaiting receipt</div></div>
+      <div class="stat-card c-red"><div class="stat-num">${overdueCount}</div><div class="stat-label">Overdue</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Incoming orders ${overdueCount ? `<span class="badge badge-overdue" style="margin-left:6px;">${overdueCount} overdue</span>` : ''}</div>
+      </div>
+      <div class="panel-body">
+        <div id="today-awaiting-list">
+          ${awaitingDelivery.length ? awaitingDelivery.map(v=>vendorRow(v,isDueOn(v,d))).join('') : '<div class="empty-state">Everything is received. No incoming orders right now.</div>'}
+        </div>
+        <div class="empty-state" id="today-awaiting-no-match" style="display:none;">No vendors match your search.</div>
+      </div>
+    </div>`;
 
   return `
     <div class="page-header">
       <div>
         <div class="page-title">Today's Run</div>
-        <div class="page-sub">Vendors scheduled to pass, and quick manual orders for any other day.</div>
+        <div class="page-sub">Place orders and receive deliveries from the same workspace.</div>
       </div>
       <div class="date-nav">
         <button data-action="date-prev">‹</button>
@@ -727,59 +796,20 @@ function renderToday(){
       </div>
     </div>
 
+    <div class="today-tabs" role="tablist">
+      <button class="today-tab ${activeSubtab==='orders'?'active':''}" data-action="today-tab" data-subtab="orders">
+        <span>Orders</span><small>${dueNeedOrder.length} ready</small>
+      </button>
+      <button class="today-tab ${activeSubtab==='receiving'?'active':''}" data-action="today-tab" data-subtab="receiving">
+        <span>Receiving</span><small>${awaitingDelivery.length}${overdueCount?' · '+overdueCount+' overdue':''}</small>
+      </button>
+    </div>
+
     <div class="search-bar-wrap" style="padding:0 0 16px 0;">
-      <input type="text" class="search-bar" id="today-search-input" placeholder="Search all vendors or salesmen…" value="${escapeHtml(state.todaySearch||'')}">
+      <input type="text" class="search-bar" id="today-search-input" placeholder="Search vendors or salesmen…" value="${escapeHtml(state.todaySearch||'')}">
     </div>
 
-    
-
-    <div class="panel">
-      <div class="panel-header"><div class="panel-title">Still to order — scheduled for ${formatDateNice(d)}</div></div>
-      <div class="panel-body">
-        <div id="today-scheduled-list">
-          ${dueNeedOrder.length ? dueNeedOrder.map(v=>vendorRow(v,true)).join('') : '<div class="empty-state">No vendor is waiting on an order for this date.</div>'}
-        </div>
-        <div class="empty-state" id="today-scheduled-no-match" style="display:none;">No vendors match your search.</div>
-      </div>
-    </div>
-<div class="panel-header">
-        <div class="panel-title">Awaiting delivery${overdueCount ? ` <span class="badge badge-overdue" style="margin-left:6px;">${overdueCount} overdue</span>` : ''}</div>
-      </div>
-    <div class="panel">
-      <div class="panel-header">
-        <div class="panel-title">No order logged — ${formatDateNice(d)}</div>
-      </div>
-      <div class="panel-body">
-        <div id="today-skipped-list">
-          ${skippedForDate.length ? skippedForDate.map(v=>vendorRow(v, isDueOn(v,d))).join('') : '<div class="empty-state">Nothing logged as "no order" for this date.</div>'}
-        </div>
-        <div class="empty-state" id="today-skipped-no-match" style="display:none;">No vendors match your search.</div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-header">
-        <div class="panel-title">Other vendors — order early or out of turn</div>
-      </div>
-      <div class="panel-body">
-        <div id="today-other-list">
-          ${otherNeedOrder.length ? otherNeedOrder.map(v=>vendorRow(v,false)).join('') : '<div class="empty-state">No other vendors waiting — add some in the Vendors tab.</div>'}
-        </div>
-        <div class="empty-state" id="today-no-match" style="display:none;">No vendors match your search.</div>
-      </div>
-    </div>
-<div class="panel">
-       <div class="panel-header">
-        <div class="panel-title">Ordered - Waiting delivery</div>
-      </div>
-
-      <div class="panel-body">
-        <div id="today-awaiting-list">
-          ${awaitingDelivery.length ? awaitingDelivery.map(v=>vendorRow(v, isDueOn(v,d))).join('') : '<div class="empty-state">No orders waiting on delivery right now.</div>'}
-        </div>
-        <div class="empty-state" id="today-awaiting-no-match" style="display:none;">No vendors match your search.</div>
-      </div>
-    </div>
+    ${activeSubtab==='orders' ? ordersContent : receivingContent}
   `;
 }
 
@@ -1410,6 +1440,7 @@ function attachMainEvents(){
   document.querySelectorAll('[data-action="close-modal"]').forEach(el=>el.addEventListener('click', closeModal));
   const gotoToday = document.querySelector('[data-action="goto-today"]');
   if(gotoToday) gotoToday.addEventListener('click', ()=>{ state.tab='today'; state.todayViewDate=todayStr(); render(); });
+  document.querySelectorAll('[data-action="today-tab"]').forEach(el=>el.addEventListener('click', ()=>{ state.todaySubtab=el.dataset.subtab; render(); }));
 
   document.querySelectorAll('[data-action="add-vendor"]').forEach(el=>el.addEventListener('click', ()=>vendorFormModal(null)));
   document.querySelectorAll('[data-action="import-excel"]').forEach(el=>el.addEventListener('click', triggerImportFile));
@@ -1430,10 +1461,6 @@ function attachMainEvents(){
       orders = orders.filter(o=>o.id!==el.dataset.id);
       saveData(); render();
     }
-  }));
-
-  document.querySelectorAll('[data-filter]').forEach(el=>el.addEventListener('click', ()=>{
-    state.orderFilter = el.dataset.filter; render();
   }));
 
   document.querySelectorAll('[data-action="no-order"]').forEach(el=>el.addEventListener('click', ()=>{
@@ -1462,7 +1489,6 @@ function attachMainEvents(){
       filterRowsBySearch('#today-other-list', state.todaySearch, '#today-no-match');
     });
   }
-  // apply any previously typed search terms after re-render
   if(state.vendorSearch) filterRowsBySearch('#vendor-list', state.vendorSearch, '#vendor-no-match');
   if(state.todaySearch){
     filterRowsBySearch('#today-awaiting-list', state.todaySearch, '#today-awaiting-no-match');
@@ -1487,12 +1513,13 @@ function attachMainEvents(){
 }
 
 async function pollRemoteChanges(){
-  if(!SUPABASE_ENABLED) return;
+  if(!SUPABASE_ENABLED) return 'disabled';
   const modalOpen = document.getElementById('modal-overlay').classList.contains('open');
-  if(modalOpen) return; // don't yank data out from under an in-progress edit
+  if(modalOpen) return 'skipped';
   try{
     const payload = await supabaseGetPayload();
-    if(!payload) return;
+    state.lastSyncCheckAt = new Date();
+    if(!payload){ updateStorageStatusUI(); return 'unchanged'; }
     const incoming = JSON.stringify({vendors:payload.vendors||[], orders:payload.orders||[], skips:payload.skips||[]});
     const current = JSON.stringify({vendors, orders, skips});
     if(incoming !== current){
@@ -1502,13 +1529,36 @@ async function pollRemoteChanges(){
       storageMode = 'supabase';
       updateStorageStatusUI();
       render();
+      return 'changed';
     }
+    updateStorageStatusUI();
+    return 'unchanged';
   }catch(e){
     console.error('Background sync check failed', e);
+    return 'failed';
   }
 }
 setInterval(pollRemoteChanges, 15000);
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) pollRemoteChanges(); });
+// Keep the "synced Xs ago" text fresh even when nothing has changed.
+setInterval(()=>{ if(state.lastSyncCheckAt) updateStorageStatusUI(); }, 10000);
+
+document.getElementById('sync-now-btn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('sync-now-btn');
+  if(!SUPABASE_ENABLED){
+    btn.textContent = '⟳ No cloud sync configured';
+    setTimeout(()=>{ btn.textContent = '⟳ Sync now'; }, 2000);
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = '⟳ Syncing…';
+  const result = await pollRemoteChanges();
+  if(result==='changed') btn.textContent = '✓ Updated';
+  else if(result==='unchanged') btn.textContent = '✓ Already up to date';
+  else if(result==='failed') btn.textContent = '⚠ Sync failed — check connection';
+  else btn.textContent = '⟳ Sync now';
+  setTimeout(()=>{ btn.textContent = '⟳ Sync now'; btn.disabled = false; }, 1800);
+});
 
 loadData();
 </script>
