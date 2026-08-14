@@ -296,6 +296,7 @@
     <div class="nav-item" data-tab="dashboard"><span class="nav-icon">▤</span> Dashboard</div>
     <div class="nav-item" data-tab="today"><span class="nav-icon">◷</span> Today's Run</div>
     <div class="nav-item" data-tab="warehouse"><span class="nav-icon">▥</span> Warehouse</div>
+    <div class="nav-item" data-tab="rentals"><span class="nav-icon">▧</span> Rentals</div>
     <div class="nav-item" data-tab="vendors"><span class="nav-icon">☰</span> Vendors</div>
     <div class="sidebar-footer">
       <div id="storage-status" style="margin-bottom:10px;"></div>
@@ -317,6 +318,7 @@
 let vendors = [];
 let orders = [];
 let skips = [];
+let rentals = [];
 let storageOK = true;
 let storageMode = 'none'; // 'supabase' | 'claude' | 'local' | 'none'
 const LOCAL_KEY = 'vendor-tracker-app-data';
@@ -418,6 +420,7 @@ async function loadData(){
       vendors = parsed.vendors || [];
       orders = parsed.orders || [];
       skips = parsed.skips || [];
+      rentals = parsed.rentals || [];
     }
     if(storageMode==='supabase') state.lastSyncCheckAt = new Date();
   }catch(e){
@@ -429,7 +432,7 @@ async function loadData(){
 
 async function saveData(){
   try{
-    await storageSetData({vendors, orders, skips});
+    await storageSetData({vendors, orders, skips, rentals});
     state.lastSavedAt = new Date();
   }catch(e){
     console.error('Storage save failed', e);
@@ -576,6 +579,7 @@ function render(){
   else if(state.tab==='today') main.innerHTML = renderToday();
   else if(state.tab==='warehouse') main.innerHTML = renderWarehouse();
   else if(state.tab==='vendors') main.innerHTML = renderVendors();
+  else if(state.tab==='rentals') main.innerHTML = renderRentals();
   attachMainEvents();
 }
 
@@ -1195,9 +1199,27 @@ function buildBackupWorkbook(){
     const v = vendorById(s.vendorId);
     return { Vendor: v?v.name:'Unknown', 'No-Order Date': s.date };
   }));
+  const rentalsThisYear = new Date().getFullYear();
+  const rentalsLastYear = rentalsThisYear - 1;
+  const rSheet = XLSX.utils.json_to_sheet(rentals.map(r=>{
+    const v = vendorById(r.vendorId);
+    const ly = rentalYearTotal(r, rentalsLastYear), ty = rentalYearTotal(r, rentalsThisYear);
+    const pct = ly>0 ? Math.round(((ty-ly)/ly)*100) : (ty>0?100:0);
+    const lyVals = (r.monthly && Array.isArray(r.monthly[rentalsLastYear])) ? r.monthly[rentalsLastYear] : Array(12).fill(0);
+    const tyVals = (r.monthly && Array.isArray(r.monthly[rentalsThisYear])) ? r.monthly[rentalsThisYear] : Array(12).fill(0);
+    const row = { Gondola:r.gondola, Supplier: v?v.name:'Unknown', 'Date From':r.dateFrom||'', 'Date To':r.dateTo||'' };
+    MONTH_NAMES.forEach((m,i)=>{ row[`${m} ${rentalsLastYear}`] = Number(lyVals[i])||0; });
+    MONTH_NAMES.forEach((m,i)=>{ row[`${m} ${rentalsThisYear}`] = Number(tyVals[i])||0; });
+    row[`${rentalsLastYear} Total`] = ly;
+    row[`${rentalsThisYear} Total`] = ty;
+    row['Change %'] = pct;
+    row['Signal'] = pct>=0?'Recommend renewal':'Review before renewal';
+    return row;
+  }));
   XLSX.utils.book_append_sheet(wb, vSheet, 'Vendors');
   XLSX.utils.book_append_sheet(wb, oSheet, 'Orders');
   XLSX.utils.book_append_sheet(wb, sSheet, 'No-Order Weeks');
+  XLSX.utils.book_append_sheet(wb, rSheet, 'Rentals');
   return wb;
 }
 
@@ -1420,6 +1442,237 @@ function deliverModal(orderId){
   });
 }
 
+/* ---------------- Rentals ---------------- */
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function rentalYearTotal(r, year){
+  if(r.monthly && Array.isArray(r.monthly[year])){
+    return r.monthly[year].reduce((sum,v)=>sum+(Number(v)||0),0);
+  }
+  // Fall back to legacy flat fields from before monthly tracking existed.
+  const thisYear = new Date().getFullYear();
+  if(year===thisYear) return Number(r.salesThisYear)||0;
+  if(year===thisYear-1) return Number(r.salesLastYear)||0;
+  return 0;
+}
+
+function rentalPctChange(r){
+  const thisYear = new Date().getFullYear();
+  const lastYear = thisYear - 1;
+  const ly = rentalYearTotal(r, lastYear);
+  const ty = rentalYearTotal(r, thisYear);
+  if(ly > 0) return Math.round(((ty-ly)/ly)*100);
+  return ty > 0 ? 100 : 0;
+}
+
+function renderRentals(){
+  const thisYear = new Date().getFullYear();
+  const lastYear = thisYear - 1;
+  const rentalsSorted = rentals.slice().sort((a,b)=>{
+    const va = vendorById(a.vendorId), vb = vendorById(b.vendorId);
+    return (va?va.name:'').localeCompare(vb?vb.name:'');
+  });
+
+  const totalLastYear = rentals.reduce((sum,r)=>sum+rentalYearTotal(r,lastYear),0);
+  const totalThisYear = rentals.reduce((sum,r)=>sum+rentalYearTotal(r,thisYear),0);
+  const overallPct = totalLastYear>0 ? Math.round(((totalThisYear-totalLastYear)/totalLastYear)*100) : (totalThisYear>0?100:0);
+  const growingCount = rentals.filter(r=>rentalPctChange(r)>=0).length;
+  const decliningCount = rentals.length - growingCount;
+
+  function rentalRow(r){
+    const v = vendorById(r.vendorId);
+    const pct = rentalPctChange(r);
+    const growing = pct >= 0;
+    const period = (r.dateFrom||r.dateTo) ? `${r.dateFrom||'—'} → ${r.dateTo||'—'}` : '—';
+    const ly = rentalYearTotal(r, lastYear), ty = rentalYearTotal(r, thisYear);
+    const hasMonthly = r.monthly && (Array.isArray(r.monthly[lastYear]) || Array.isArray(r.monthly[thisYear]));
+    return `<tr>
+      <td><strong>${escapeHtml(r.gondola||'—')}</strong><div class="mono" style="font-size:11px; color:var(--ink-dim); margin-top:2px;">${escapeHtml(period)}</div></td>
+      <td>${escapeHtml(v?v.name:'Unknown vendor')}</td>
+      <td class="mono">$${ly.toLocaleString()}</td>
+      <td class="mono">$${ty.toLocaleString()}</td>
+      <td><span class="badge ${growing?'badge-delivered':'badge-overdue'}">${pct>=0?'+':''}${pct}%</span></td>
+      <td><span class="badge ${growing?'badge-delivered':'badge-overdue'}">${growing?'Recommend renewal':'Review before renewal'}</span></td>
+      <td>
+        <button class="btn btn-ghost btn-sm" data-action="edit-monthly" data-id="${r.id}">📅 Monthly${hasMonthly?'':' — not entered'}</button>
+        <button class="btn btn-ghost btn-sm" data-action="edit-rental" data-id="${r.id}">Edit</button>
+        <button class="btn btn-danger btn-sm" data-action="delete-rental" data-id="${r.id}">Delete</button>
+      </td>
+    </tr>`;
+  }
+
+  return `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Rentals</div>
+        <div class="page-sub">Gondola rental performance — ${lastYear} vs ${thisYear} sales, to guide renewal decisions.</div>
+      </div>
+      <button class="btn btn-amber" data-action="add-rental">+ Add Rental</button>
+    </div>
+
+    ${rentals.length ? `
+    <div class="cards-row">
+      <div class="stat-card c-teal"><div class="stat-num">${rentals.length}</div><div class="stat-label">Gondolas tracked</div></div>
+      <div class="stat-card"><div class="stat-num">$${totalLastYear.toLocaleString()}</div><div class="stat-label">${lastYear} total sales</div></div>
+      <div class="stat-card primary-stat" style="border-color:var(--primary);"><div class="stat-num">$${totalThisYear.toLocaleString()}</div><div class="stat-label">${thisYear} total sales</div></div>
+      <div class="stat-card ${overallPct>=0?'c-green':'c-red'}"><div class="stat-num">${overallPct>=0?'+':''}${overallPct}%</div><div class="stat-label">Overall change</div></div>
+    </div>
+    <div class="cards-row" style="margin-top:-16px;">
+      <div class="stat-card c-green"><div class="stat-num">${growingCount}</div><div class="stat-label">Growing — likely renew</div></div>
+      <div class="stat-card c-red"><div class="stat-num">${decliningCount}</div><div class="stat-label">Declining — review</div></div>
+    </div>
+    ` : ''}
+
+    <div class="panel">
+      <div class="panel-header"><div class="panel-title">Gondola performance</div></div>
+      <div class="panel-body">
+        <table>
+          <thead><tr><th>Gondola</th><th>Supplier</th><th>${lastYear} sales</th><th>${thisYear} sales</th><th>Change</th><th>Signal</th><th></th></tr></thead>
+          <tbody>
+          ${rentalsSorted.length ? rentalsSorted.map(rentalRow).join('') : `<tr><td colspan="7"><div class="empty-state">No rentals logged yet. Add a gondola to start tracking supplier performance.</div></td></tr>`}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function rentalFormModal(existing){
+  const r = existing || { vendorId: vendors.length?vendors[0].id:'', gondola:'', dateFrom:'', dateTo:'' };
+  openModal(`
+    <div class="modal-header"><h3>${existing?'Edit Rental':'Add Rental'}</h3><span class="modal-close" data-action="close-modal">×</span></div>
+    <div class="modal-body">
+      <div id="rental-form">
+        <div class="field">
+          <label>Supplier</label>
+          <select name="vendorId">
+            ${vendors.length ? vendors.map(v=>`<option value="${v.id}" ${r.vendorId===v.id?'selected':''}>${escapeHtml(v.name)}</option>`).join('') : '<option value="">No vendors yet — add one in the Vendors tab first</option>'}
+          </select>
+        </div>
+        <div class="field"><label>Gondola name / number</label><input name="gondola" value="${escapeHtml(r.gondola)}" placeholder="e.g. Gondola 3"></div>
+        <div class="field-row">
+          <div class="field"><label>Date from (optional)</label><input type="date" name="dateFrom" value="${r.dateFrom||''}"></div>
+          <div class="field"><label>Date to (optional)</label><input type="date" name="dateTo" value="${r.dateTo||''}"></div>
+        </div>
+        <div class="hint">${existing?'Use the 📅 Monthly button on the rentals list to enter or update sales figures.':'After adding, use the 📅 Monthly button on the rentals list to enter month-by-month sales for both years.'}</div>
+        <div class="hint" id="rental-form-error" style="color:var(--red); display:none;"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+          <button type="button" class="btn btn-amber" id="rental-form-submit">${existing?'Save changes':'Add rental'}</button>
+        </div>
+      </div>
+    </div>
+  `);
+  document.getElementById('rental-form-submit').addEventListener('click', ()=>{
+    const root = document.getElementById('rental-form');
+    const vendorId = root.querySelector('[name="vendorId"]').value;
+    const gondola = root.querySelector('[name="gondola"]').value.trim();
+    const dateFrom = root.querySelector('[name="dateFrom"]').value;
+    const dateTo = root.querySelector('[name="dateTo"]').value;
+    const errEl = document.getElementById('rental-form-error');
+    if(!vendorId || !gondola){
+      errEl.textContent = 'Please fill in supplier and gondola name.';
+      errEl.style.display = 'block';
+      return;
+    }
+    if(dateFrom && dateTo && dateTo < dateFrom){
+      errEl.textContent = '"Date to" cannot be before "date from".';
+      errEl.style.display = 'block';
+      return;
+    }
+    const data = existing
+      ? { ...existing, vendorId, gondola, dateFrom, dateTo }
+      : { id:'r_'+Date.now()+Math.random().toString(36).slice(2,7), vendorId, gondola, dateFrom, dateTo, monthly:{} };
+    if(existing){
+      const idx = rentals.findIndex(x=>x.id===existing.id);
+      rentals[idx] = data;
+    } else {
+      rentals.push(data);
+    }
+    saveData();
+    closeModal();
+    if(!existing) monthlyBreakdownModal(data.id);
+    else render();
+  });
+}
+
+function monthlyBreakdownModal(rentalId){
+  const r = rentals.find(x=>x.id===rentalId);
+  if(!r) return;
+  const v = vendorById(r.vendorId);
+  const thisYear = new Date().getFullYear();
+  const lastYear = thisYear - 1;
+  const lyVals = (r.monthly && Array.isArray(r.monthly[lastYear])) ? r.monthly[lastYear] : Array(12).fill(0);
+  const tyVals = (r.monthly && Array.isArray(r.monthly[thisYear])) ? r.monthly[thisYear] : Array(12).fill(0);
+
+  openModal(`
+    <div class="modal-header"><h3>Monthly Sales — ${escapeHtml(r.gondola||'Gondola')}</h3><span class="modal-close" data-action="close-modal">×</span></div>
+    <div class="modal-body">
+      <div class="hint" style="margin-bottom:10px;">${escapeHtml(v?v.name:'Unknown vendor')} — enter sales for each month. Yearly totals and % change update automatically.</div>
+      <div id="monthly-form">
+        <div style="display:flex; gap:10px; padding:0 0 6px 0; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:var(--ink-dim);">
+          <div style="width:44px;">Month</div>
+          <div style="flex:1;">${lastYear}</div>
+          <div style="flex:1;">${thisYear}</div>
+        </div>
+        <div style="max-height:340px; overflow-y:auto;">
+          ${MONTH_NAMES.map((m,i)=>`
+          <div style="display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--line);">
+            <div style="width:44px; font-size:13px; font-weight:600;">${m}</div>
+            <input type="number" min="0" step="0.01" data-year="${lastYear}" data-month="${i}" value="${lyVals[i]||0}" style="flex:1; padding:7px 9px; border:1px solid var(--line); border-radius:6px; font-size:13px; font-family:'IBM Plex Sans',sans-serif;">
+            <input type="number" min="0" step="0.01" data-year="${thisYear}" data-month="${i}" value="${tyVals[i]||0}" style="flex:1; padding:7px 9px; border:1px solid var(--line); border-radius:6px; font-size:13px; font-family:'IBM Plex Sans',sans-serif;">
+          </div>`).join('')}
+        </div>
+        <div style="display:flex; gap:10px; padding-top:8px; font-size:12px; font-weight:700; color:var(--ink-dim);">
+          <div style="width:44px;">Total</div>
+          <div style="flex:1;" id="monthly-total-ly" class="mono"></div>
+          <div style="flex:1;" id="monthly-total-ty" class="mono"></div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+          <button type="button" class="btn btn-amber" id="monthly-form-submit">Save monthly sales</button>
+        </div>
+      </div>
+    </div>
+  `);
+  document.getElementById('modal-box').style.maxWidth = '600px';
+
+  const root = document.getElementById('monthly-form');
+  const lyTotalEl = document.getElementById('monthly-total-ly');
+  const tyTotalEl = document.getElementById('monthly-total-ty');
+  function recalcTotals(){
+    let lySum = 0, tySum = 0;
+    root.querySelectorAll('input[data-year]').forEach(inp=>{
+      const val = Number(inp.value)||0;
+      if(Number(inp.dataset.year)===lastYear) lySum += val; else tySum += val;
+    });
+    lyTotalEl.textContent = '$'+lySum.toLocaleString();
+    tyTotalEl.textContent = '$'+tySum.toLocaleString();
+  }
+  root.querySelectorAll('input[data-year]').forEach(inp=>inp.addEventListener('input', recalcTotals));
+  recalcTotals();
+
+  document.getElementById('monthly-form-submit').addEventListener('click', ()=>{
+    const newLy = Array(12).fill(0);
+    const newTy = Array(12).fill(0);
+    root.querySelectorAll('input[data-year]').forEach(inp=>{
+      const year = Number(inp.dataset.year);
+      const month = Number(inp.dataset.month);
+      const val = Number(inp.value)||0;
+      if(year===lastYear) newLy[month]=val; else if(year===thisYear) newTy[month]=val;
+    });
+    r.monthly = r.monthly || {};
+    r.monthly[lastYear] = newLy;
+    r.monthly[thisYear] = newTy;
+    // Keep legacy flat fields in sync too, harmless if unused.
+    r.salesLastYear = newLy.reduce((a,b)=>a+b,0);
+    r.salesThisYear = newTy.reduce((a,b)=>a+b,0);
+    saveData();
+    closeModal();
+    render();
+  });
+}
+
 /* ---------------- Events ---------------- */
 document.querySelectorAll('.nav-item').forEach(item=>{
   item.addEventListener('click', ()=>{ state.tab = item.dataset.tab; render(); });
@@ -1429,7 +1682,7 @@ document.getElementById('modal-overlay').addEventListener('click', (e)=>{
 });
 document.getElementById('reset-data').addEventListener('click', async ()=>{
   if(confirm('This will permanently delete all vendors, orders, and no-order records. Continue?')){
-    vendors=[]; orders=[]; skips=[];
+    vendors=[]; orders=[]; skips=[]; rentals=[];
     await saveData();
     render();
   }
@@ -1459,6 +1712,16 @@ function attachMainEvents(){
   document.querySelectorAll('[data-action="delete-order"]').forEach(el=>el.addEventListener('click', ()=>{
     if(confirm('Delete this order record?')){
       orders = orders.filter(o=>o.id!==el.dataset.id);
+      saveData(); render();
+    }
+  }));
+
+  document.querySelectorAll('[data-action="add-rental"]').forEach(el=>el.addEventListener('click', ()=>rentalFormModal(null)));
+  document.querySelectorAll('[data-action="edit-rental"]').forEach(el=>el.addEventListener('click', ()=>rentalFormModal(rentals.find(r=>r.id===el.dataset.id))));
+  document.querySelectorAll('[data-action="edit-monthly"]').forEach(el=>el.addEventListener('click', ()=>monthlyBreakdownModal(el.dataset.id)));
+  document.querySelectorAll('[data-action="delete-rental"]').forEach(el=>el.addEventListener('click', ()=>{
+    if(confirm('Delete this rental record?')){
+      rentals = rentals.filter(r=>r.id!==el.dataset.id);
       saveData(); render();
     }
   }));
@@ -1520,12 +1783,13 @@ async function pollRemoteChanges(){
     const payload = await supabaseGetPayload();
     state.lastSyncCheckAt = new Date();
     if(!payload){ updateStorageStatusUI(); return 'unchanged'; }
-    const incoming = JSON.stringify({vendors:payload.vendors||[], orders:payload.orders||[], skips:payload.skips||[]});
-    const current = JSON.stringify({vendors, orders, skips});
+    const incoming = JSON.stringify({vendors:payload.vendors||[], orders:payload.orders||[], skips:payload.skips||[], rentals:payload.rentals||[]});
+    const current = JSON.stringify({vendors, orders, skips, rentals});
     if(incoming !== current){
       vendors = payload.vendors || [];
       orders = payload.orders || [];
       skips = payload.skips || [];
+      rentals = payload.rentals || [];
       storageMode = 'supabase';
       updateStorageStatusUI();
       render();
