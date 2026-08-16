@@ -529,8 +529,13 @@ function pendingOrderForVendor(vendorId){
   const list = orders.filter(o=>o.vendorId===vendorId && o.status==='pending').sort((a,b)=> a.orderDate < b.orderDate ? 1 : -1);
   return list.length ? list[0] : null;
 }
+function draftOrderForVendor(vendorId){
+  const list = orders.filter(o=>o.vendorId===vendorId && o.status==='draft').sort((a,b)=> (b.preparedAt||'').localeCompare(a.preparedAt||''));
+  return list.length ? list[0] : null;
+}
 function orderStatusBadge(order){
   if(order.status==='delivered') return '<span class="badge badge-delivered">Delivered</span>';
+  if(order.status==='draft') return '<span class="badge badge-due">Prepared — not sent</span>';
   if(isOverdue(order)) return '<span class="badge badge-overdue">Overdue</span>';
   return '<span class="badge badge-pending">Pending</span>';
 }
@@ -614,9 +619,11 @@ function renderDashboard(){
       <div class="panel-body">
         ${dueTodayVendors.length ? dueTodayVendors.map(v=>{
           const pendingOrder = pendingOrderForVendor(v.id);
+          const draftOrder = draftOrderForVendor(v.id);
           const skipped = hasSkipOnDate(v.id, today);
           let badge = '<span class="badge badge-due">Not ordered yet</span>';
           if(pendingOrder) badge = `<span class="badge ${isOverdue(pendingOrder)?'badge-overdue':'badge-pending'}">${isOverdue(pendingOrder)?'Overdue':'Not received'} · exp ${pendingOrder.expectedDelivery}</span>`;
+          else if(draftOrder) badge = '<span class="badge badge-due">Prepared — not sent</span>';
           else if(skipped) badge = '<span class="badge badge-pending">No order</span>';
           return `<div class="tag-row">
             <div class="tag-main">
@@ -673,13 +680,16 @@ function renderToday(){
 
   function isVendorHandled(v){
     const pendingOrder = pendingOrderForVendor(v.id);
-    return !!pendingOrder || hasSkipOnDate(v.id, d);
+    const draftOrder = draftOrderForVendor(v.id);
+    return !!pendingOrder || !!draftOrder || hasSkipOnDate(v.id, d);
   }
 
   const dueVendorsAll = vendors.filter(v=>isDueOn(v,d));
   const otherVendorsAll = vendors.filter(v=>!isDueOn(v,d));
   const dueNeedOrder = dueVendorsAll.filter(v=>!isVendorHandled(v));
   const otherNeedOrder = otherVendorsAll.filter(v=>!isVendorHandled(v));
+
+  const draftVendors = vendors.filter(v=>!!draftOrderForVendor(v.id));
 
   const awaitingDelivery = vendors
     .filter(v=>!!pendingOrderForVendor(v.id))
@@ -692,11 +702,12 @@ function renderToday(){
 
   function vendorRow(v, scheduled){
     const pendingOrder = pendingOrderForVendor(v.id);
+    const draftOrder = draftOrderForVendor(v.id);
     const skipped = hasSkipOnDate(v.id, d);
     const lastOrd = lastOrderDate(v.id);
     const lastDel = lastDelivery(v.id);
     const searchKey = ((v.name||'')+' '+(v.salesmanName||'')+' '+(v.phone||'')).toLowerCase();
-    const handled = !!pendingOrder || skipped;
+    const handled = !!pendingOrder || !!draftOrder || skipped;
     let actions;
 
     if(activeSubtab==='receiving'){
@@ -712,6 +723,10 @@ function renderToday(){
         const overdue = isOverdue(pendingOrder);
         actions = `<span class="badge ${overdue?'badge-overdue':'badge-pending'}">${overdue?'Overdue':'Ordered'} · exp ${pendingOrder.expectedDelivery}</span>
           <button class="btn btn-ghost btn-sm" data-action="deliver" data-id="${pendingOrder.id}">Mark Received</button>`;
+      } else if(draftOrder){
+        actions = `<span class="badge badge-due">Prepared — not sent</span>
+          <button class="btn btn-amber btn-sm" data-action="send-order" data-id="${draftOrder.id}">Send to Supplier</button>
+          <button class="btn btn-danger btn-sm" data-action="delete-order" data-id="${draftOrder.id}">Delete</button>`;
       } else if(skipped){
         actions = `<span class="badge badge-pending">No order</span><button class="btn btn-ghost btn-sm" data-action="undo-skip" data-id="${v.id}" data-date="${d}">Undo</button>`;
       } else {
@@ -746,6 +761,19 @@ function renderToday(){
           ${dueNeedOrder.length ? dueNeedOrder.map(v=>vendorRow(v,true)).join('') : '<div class="empty-state">No vendor is waiting on an order for this date.</div>'}
         </div>
         <div class="empty-state" id="today-scheduled-no-match" style="display:none;">No vendors match your search.</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Prepared orders — not yet sent</div>
+        ${draftVendors.length ? `<span class="badge badge-due">${draftVendors.length}</span>` : ''}
+      </div>
+      <div class="panel-body">
+        <div id="today-draft-list">
+          ${draftVendors.length ? draftVendors.map(v=>vendorRow(v,isDueOn(v,d))).join('') : '<div class="empty-state">Nothing prepared yet. Orders saved as a draft (not sent to the supplier) will appear here.</div>'}
+        </div>
+        <div class="empty-state" id="today-draft-no-match" style="display:none;">No vendors match your search.</div>
       </div>
     </div>
 
@@ -1340,15 +1368,18 @@ function confirmModal(title, bodyHtml, confirmLabel, onConfirm){
 
 function attemptPlaceOrder(vendorId){
   const v = vendorById(vendorId);
-  const pending = orders.filter(o=>o.vendorId===vendorId && o.status==='pending');
-  if(pending.length){
-    const rows = pending.map(o=>`Ordered ${o.orderDate} → expected ${o.expectedDelivery}${isOverdue(o)?' <strong style="color:var(--red)">(overdue)</strong>':''}`).join('<br>');
+  const existing = orders.filter(o=>o.vendorId===vendorId && (o.status==='pending' || o.status==='draft'));
+  if(existing.length){
+    const rows = existing.map(o=>{
+      if(o.status==='draft') return `Prepared, not yet sent to supplier`;
+      return `Ordered ${o.orderDate} → expected ${o.expectedDelivery}${isOverdue(o)?' <strong style="color:var(--red)">(overdue)</strong>':''}`;
+    }).join('<br>');
     confirmModal(
-      'Order not yet received',
-      `<p style="margin-top:0;">${escapeHtml(v?v.name:'This vendor')} already has ${pending.length} order${pending.length>1?'s':''} that ${pending.length>1?'haven\u2019t':'hasn\u2019t'} been marked as delivered:</p>
+      'Order already in progress',
+      `<p style="margin-top:0;">${escapeHtml(v?v.name:'This vendor')} already has ${existing.length} order${existing.length>1?'s':''} in progress:</p>
        <div class="hint" style="background:#fbfbfa; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:10px 0;">${rows}</div>
-       <p>Place another order anyway?</p>`,
-      'Yes, place another order',
+       <p>Prepare or place another order anyway?</p>`,
+      'Yes, continue anyway',
       ()=>placeOrderModal(vendorId)
     );
   } else {
@@ -1367,36 +1398,82 @@ function placeOrderModal(vendorId){
           <div class="field"><label>Order date</label><input type="date" name="orderDate" value="${state.todayViewDate || today}"></div>
           <div class="field"><label>Lead time (days)</label><input type="number" min="0" name="leadTimeDays" value="${v.leadTimeDays}"></div>
         </div>
-        <div class="hint">Expected delivery will be calculated automatically from the order date + lead time.</div>
+        <div class="hint">Expected delivery will be calculated automatically from the order date + lead time. If you're only preparing the order and haven't given it to the supplier yet, save it as a draft instead — you can send it later from Today's Run.</div>
         <div class="hint" id="order-form-error" style="color:var(--red); display:none;"></div>
         <div class="modal-actions">
           <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+          <button type="button" class="btn btn-ghost" id="order-form-draft">Save as Draft</button>
           <button type="button" class="btn btn-amber" id="order-form-submit">Place order</button>
         </div>
       </div>
     </div>
   `);
-  document.getElementById('order-form-submit').addEventListener('click', ()=>{
+  function createOrder(status){
     const root = document.getElementById('order-form');
     const orderDate = root.querySelector('[name="orderDate"]').value;
     const leadTimeDays = Number(root.querySelector('[name="leadTimeDays"]').value);
     const errEl = document.getElementById('order-form-error');
-    if(!orderDate || isNaN(leadTimeDays)){
-      errEl.textContent = 'Please fill in the order date and lead time.';
+    if(isNaN(leadTimeDays) || (status==='pending' && !orderDate)){
+      errEl.textContent = status==='pending' ? 'Please fill in the order date and lead time.' : 'Please fill in a lead time.';
       errEl.style.display = 'block';
       return;
     }
     const order = {
       id: 'o_'+Date.now()+Math.random().toString(36).slice(2,7),
       vendorId,
-      orderDate,
+      orderDate: status==='draft' ? (orderDate||null) : orderDate,
       leadTimeDays,
-      expectedDelivery: addDays(orderDate, leadTimeDays),
-      status:'pending',
+      expectedDelivery: status==='draft' ? null : addDays(orderDate, leadTimeDays),
+      status,
       deliveredDate:null,
-      deliveredTime:null
+      deliveredTime:null,
+      preparedAt: status==='draft' ? new Date().toISOString() : null
     };
     orders.push(order);
+    saveData();
+    closeModal();
+    render();
+  }
+  document.getElementById('order-form-submit').addEventListener('click', ()=>createOrder('pending'));
+  document.getElementById('order-form-draft').addEventListener('click', ()=>createOrder('draft'));
+}
+
+function sendOrderModal(orderId){
+  const o = orders.find(x=>x.id===orderId);
+  if(!o) return;
+  const v = vendorById(o.vendorId);
+  openModal(`
+    <div class="modal-header"><h3>Send to Supplier — ${escapeHtml(v?v.name:'')}</h3><span class="modal-close" data-action="close-modal">×</span></div>
+    <div class="modal-body">
+      <div id="send-order-form">
+        <div class="field-row">
+          <div class="field"><label>Order date (sent today)</label><input type="date" name="orderDate" value="${todayStr()}"></div>
+          <div class="field"><label>Lead time (days)</label><input type="number" min="0" name="leadTimeDays" value="${o.leadTimeDays}"></div>
+        </div>
+        <div class="hint">Expected delivery will be calculated from this send date + lead time, and the order will move to "awaiting delivery".</div>
+        <div class="hint" id="send-order-form-error" style="color:var(--red); display:none;"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" data-action="close-modal">Cancel</button>
+          <button type="button" class="btn btn-amber" id="send-order-form-submit">Confirm sent</button>
+        </div>
+      </div>
+    </div>
+  `);
+  document.getElementById('send-order-form-submit').addEventListener('click', ()=>{
+    const root = document.getElementById('send-order-form');
+    const orderDate = root.querySelector('[name="orderDate"]').value;
+    const leadTimeDays = Number(root.querySelector('[name="leadTimeDays"]').value);
+    const errEl = document.getElementById('send-order-form-error');
+    if(!orderDate || isNaN(leadTimeDays)){
+      errEl.textContent = 'Please fill in the send date and lead time.';
+      errEl.style.display = 'block';
+      return;
+    }
+    o.status = 'pending';
+    o.orderDate = orderDate;
+    o.leadTimeDays = leadTimeDays;
+    o.expectedDelivery = addDays(orderDate, leadTimeDays);
+    o.preparedAt = null;
     saveData();
     closeModal();
     render();
@@ -1708,6 +1785,7 @@ function attachMainEvents(){
     }
   }));
   document.querySelectorAll('[data-action="place-order"]').forEach(el=>el.addEventListener('click', ()=>attemptPlaceOrder(el.dataset.id)));
+  document.querySelectorAll('[data-action="send-order"]').forEach(el=>el.addEventListener('click', ()=>sendOrderModal(el.dataset.id)));
   document.querySelectorAll('[data-action="deliver"]').forEach(el=>el.addEventListener('click', ()=>deliverModal(el.dataset.id)));
   document.querySelectorAll('[data-action="delete-order"]').forEach(el=>el.addEventListener('click', ()=>{
     if(confirm('Delete this order record?')){
@@ -1748,6 +1826,7 @@ function attachMainEvents(){
       state.todaySearch = e.target.value;
       filterRowsBySearch('#today-awaiting-list', state.todaySearch, '#today-awaiting-no-match');
       filterRowsBySearch('#today-scheduled-list', state.todaySearch, '#today-scheduled-no-match');
+      filterRowsBySearch('#today-draft-list', state.todaySearch, '#today-draft-no-match');
       filterRowsBySearch('#today-skipped-list', state.todaySearch, '#today-skipped-no-match');
       filterRowsBySearch('#today-other-list', state.todaySearch, '#today-no-match');
     });
@@ -1756,6 +1835,7 @@ function attachMainEvents(){
   if(state.todaySearch){
     filterRowsBySearch('#today-awaiting-list', state.todaySearch, '#today-awaiting-no-match');
     filterRowsBySearch('#today-scheduled-list', state.todaySearch, '#today-scheduled-no-match');
+    filterRowsBySearch('#today-draft-list', state.todaySearch, '#today-draft-no-match');
     filterRowsBySearch('#today-skipped-list', state.todaySearch, '#today-skipped-no-match');
     filterRowsBySearch('#today-other-list', state.todaySearch, '#today-no-match');
   }
